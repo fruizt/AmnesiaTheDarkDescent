@@ -7,10 +7,12 @@ OPTION(USERDIR_RESOURCES "Allow using local userdirectory resources" ON)
 
 set(MACOSX_BUNDLE_COPYRIGHT "Copyright © 2010-2013 Frictional Games")
 
-OPTION(IS_APPLE_64 "Apple build in 64 bits" OFF)
+OPTION(IS_APPLE_64 "Apple build in 64 bits" ON)
 
 if(APPLE)
-    if(NOT IS_APPLE_64)
+    if(IS_APPLE_64)
+        set(CMAKE_OSX_ARCHITECTURES "x86_64")
+    else()
         set(CMAKE_OSX_ARCHITECTURES "i386")
     endif()
 endif()
@@ -21,6 +23,7 @@ add_definitions(
     -Wno-reorder
     -Wno-unused-variable
     -Wno-unused-function
+    -Wno-c++11-narrowing
 )
 
 add_subdirectory(../../HPL2/core core2)
@@ -36,7 +39,11 @@ set(VERSION "1.3.1")
 add_subdirectory(game game)
 
 if(APPLE)
-    add_subdirectory(launcher-macosx launcher)
+    # Off by default: Launcher_Prefix.pch is missing from the source release
+    OPTION(BUILD_MACOSX_LAUNCHER "Build the macOS launcher" OFF)
+    if(BUILD_MACOSX_LAUNCHER)
+        add_subdirectory(launcher-macosx launcher)
+    endif()
 else()
     add_subdirectory(launcher launcher)
 endif()

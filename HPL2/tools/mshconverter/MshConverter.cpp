@@ -490,7 +490,7 @@ void Exit()
 	int hplMain(const tString &asCommandLine){return -1;}
 #endif
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(USE_SDL2)
 extern "C" int SDL_main(int argc, char *argv[]);
 int main(int argc, char * argv[]) {
     return SDL_main(argc, argv);

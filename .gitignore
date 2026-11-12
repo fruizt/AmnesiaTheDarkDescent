@@ -348,3 +348,8 @@ MigrationBackup/
 
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
+
+# macOS CMake build (see build-macos.sh)
+/build/
+/HPL2/dependencies/
+BuildID_*_MacOSX.cpp
