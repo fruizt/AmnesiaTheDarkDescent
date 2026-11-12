@@ -27,7 +27,7 @@ set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -fno-strict-aliasing")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing")
 
 if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.6")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
 endif()
 
 if(LINUX)
