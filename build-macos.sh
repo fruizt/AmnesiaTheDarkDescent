@@ -49,9 +49,11 @@ if [ ! -f "$SDL_STAMP" ]; then
 fi
 
 # CMAKE_POLICY_VERSION_MINIMUM lets CMake 4+ accept the project's old cmake_minimum_required(2.8.11).
+# CMAKE_EXPORT_COMPILE_COMMANDS writes build/compile_commands.json for editor code analysis.
 cmake -S "$ROOT/amnesia/src" -B "$BUILD" -Wno-dev \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build "$BUILD" -j"$(sysctl -n hw.ncpu)"
 
 echo "Built: $BUILD/Amnesia.app"
