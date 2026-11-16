@@ -18,6 +18,9 @@ read it before starting work.
   "Generated with" lines). Commits are authored by the user alone.
 - Work directly on `master`; don't create branches unless asked.
 - Commit or push only when the user asks.
+- Record big decisions (architecture, technology, direction) in
+  `docs/decisions/` as a numbered record with the rejected options;
+  see its README.
 - Every build rewrites the tracked `BuildID_*.h` headers (a build counter).
   Revert them with `git checkout -- '*BuildID_*.h'`; never commit them.
 - Match HPL2's code style: PascalCase functions; Hungarian prefixes

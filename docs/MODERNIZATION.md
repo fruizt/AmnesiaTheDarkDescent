@@ -292,6 +292,11 @@ Spike phases:
   are presentation (below), frame rate and skinned characters.
 
 ## RTX mode design (2026-11-16)
+Decision record: [0001](decisions/0001-remix-frame-shown-through-opengl.md).
+Build steps 1 and 2 are done (commit `579c275`): the import works on the RTX
+4070 Ti Super, and RTX mode shows in the game window with the HUD and post
+effects on top, F9 working both ways.
+
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world
 would be, then draws its post effects, menus and HUD on top as usual.
