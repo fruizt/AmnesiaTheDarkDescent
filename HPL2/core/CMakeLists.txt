@@ -232,7 +232,7 @@ ELSEIF(WIN32)
         # RTX Remix spike (docs/MODERNIZATION.md); active at runtime with HPL_REMIX=1
         OPTION(HPL_REMIX "Build the RTX Remix spike (64-bit Windows)" ON)
         IF(HPL_REMIX)
-            LIST(APPEND impl_sources sources/impl/RemixSpike.cpp)
+            LIST(APPEND impl_sources sources/impl/RemixSpike.cpp sources/impl/RemixContext.cpp)
         ENDIF()
     ENDIF()
 ENDIF()

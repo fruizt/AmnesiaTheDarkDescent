@@ -17,12 +17,7 @@
  * along with Amnesia: The Dark Descent.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// remix_c.h includes windows.h; keep its min/max macros away from the engine
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <GL/glew.h>
-#include <d3d9.h>	// before remix_c.h, which only forward-declares the D3D9 types
-#include <remix/remix_c.h>
+#include "impl/RemixContext.h"	// first: it includes windows.h with NOMINMAX
 
 #include "impl/RemixSpike.h"
 
@@ -53,21 +48,10 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	static remixapi_Interface gRemix = {};
-	static HMODULE ghRemixDll = NULL;
+	// Owns Remix and the OpenGL interop (device, shared texture, present/copy/draw)
+	static cRemixContext gRemixContext;
+	static remixapi_Interface *gpRemix = NULL;	// gRemixContext's API, set once it's ready
 	static HWND ghGameWindow = NULL;	// the engine's SDL window, only OpenGL presents to it
-
-	// Remix renders off-screen. Its D3D9 device presents to a hidden window, and
-	// each frame its final image is copied into a texture shared with OpenGL
-	// (docs/MODERNIZATION.md, "RTX mode design").
-	static HWND ghHiddenWindow = NULL;
-	static IDirect3D9Ex *gpD3D9 = NULL;
-	static IDirect3DDevice9Ex *gpDevice = NULL;
-	static IDirect3DTexture9 *gpSharedTexture = NULL;
-	static IDirect3DSurface9 *gpSharedSurface = NULL;
-	static IDirect3DQuery9 *gpCopyDoneQuery = NULL;
-	static GLuint glGlMemory = 0;
-	static GLuint glGlTexture = 0;	// 0 if the OpenGL import failed
 
 	static bool gbStartupTried = false;
 	static bool gbRunning = false;
@@ -209,199 +193,6 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	// What remixapi_Startup does, but keeping the device: we need it to create the
-	// shared texture. Its swapchain goes to a hidden window of the game window's
-	// size, so the game window stays OpenGL's.
-	static bool CreateRemixDevice(int alWidth, int alHeight)
-	{
-		WNDCLASSW windowClass = {};
-		windowClass.lpfnWndProc = DefWindowProcW;
-		windowClass.hInstance = GetModuleHandleW(NULL);
-		windowClass.lpszClassName = L"HPL2_RemixHidden";
-		RegisterClassW(&windowClass);
-
-		// Never shown. Remix sizes its output from this window's client area.
-		RECT rect = { 0, 0, alWidth, alHeight };
-		AdjustWindowRect(&rect, WS_POPUP, FALSE);
-		ghHiddenWindow = CreateWindowExW(0, windowClass.lpszClassName, L"Remix", WS_POPUP, 0, 0,
-										rect.right - rect.left, rect.bottom - rect.top,
-										NULL, NULL, windowClass.hInstance, NULL);
-		if(ghHiddenWindow==NULL)
-		{
-			Error("Remix: could not create the hidden window\n");
-			return false;
-		}
-
-		remixapi_ErrorCode lResult = gRemix.dxvk_CreateD3D9(false, &gpD3D9);
-		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
-		{
-			Error("Remix: dxvk_CreateD3D9 failed (error %d)\n", lResult);
-			return false;
-		}
-
-		// The same parameters as remixapi_Startup
-		D3DPRESENT_PARAMETERS presentParams = {};
-		presentParams.BackBufferWidth = (UINT)alWidth;
-		presentParams.BackBufferHeight = (UINT)alHeight;
-		presentParams.BackBufferFormat = D3DFMT_UNKNOWN;
-		presentParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
-		presentParams.hDeviceWindow = ghHiddenWindow;
-		presentParams.Windowed = TRUE;
-
-		HRESULT hr = gpD3D9->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, ghHiddenWindow,
-											D3DCREATE_HARDWARE_VERTEXPROCESSING, &presentParams, NULL, &gpDevice);
-		if(FAILED(hr) || gpDevice==NULL)
-		{
-			Error("Remix: CreateDeviceEx failed (0x%08x)\n", (unsigned)hr);
-			return false;
-		}
-
-		lResult = gRemix.dxvk_RegisterD3D9Device(gpDevice);
-		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
-		{
-			Error("Remix: dxvk_RegisterD3D9Device failed (error %d)\n", lResult);
-			return false;
-		}
-		return true;
-	}
-
-	//-----------------------------------------------------------------------
-
-	// A render target on Remix's device whose memory Windows can share
-	// (Vulkan memory exported as an OPAQUE_WIN32_KMT handle)
-	static HANDLE CreateSharedTexture(int alWidth, int alHeight)
-	{
-		// RGBA byte order, which OpenGL's GL_RGBA8 also uses (the copy converts
-		// from Remix's BGRA back buffer)
-		HANDLE hShared = NULL;
-		HRESULT hr = gpDevice->CreateTexture((UINT)alWidth, (UINT)alHeight, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8B8G8R8,
-											D3DPOOL_DEFAULT, &gpSharedTexture, &hShared);
-		if(FAILED(hr) || gpSharedTexture==NULL || hShared==NULL || hShared==INVALID_HANDLE_VALUE)
-		{
-			Error("Remix: could not create the shared texture (0x%08x)\n", (unsigned)hr);
-			return NULL;
-		}
-		gpSharedTexture->GetSurfaceLevel(0, &gpSharedSurface);
-
-		// Lets the CPU wait until Remix's copy into it is done
-		gpDevice->CreateQuery(D3DQUERYTYPE_EVENT, &gpCopyDoneQuery);
-		return hShared;
-	}
-
-	//-----------------------------------------------------------------------
-
-	// Make the shared memory an OpenGL texture (GL_EXT_memory_object_win32).
-	// Remix allocates it as a dedicated allocation of a size it doesn't report, and
-	// the GPU pads images for its tiling. The driver refuses a size too small
-	// (GL_INVALID_VALUE) and one larger than the allocation (GL_OUT_OF_MEMORY), so
-	// search upwards from the image's byte size in 64 KB steps.
-	static bool ImportIntoOpenGL(HANDLE ahShared, int alWidth, int alHeight)
-	{
-		if(GLEW_EXT_memory_object==false || GLEW_EXT_memory_object_win32==false)
-		{
-			Error("Remix: OpenGL lacks GL_EXT_memory_object(_win32), can't show Remix's image\n");
-			return false;
-		}
-
-		GLint lPrevTexture = 0;
-		glGetIntegerv(GL_TEXTURE_BINDING_2D, &lPrevTexture);
-		while(glGetError() != GL_NO_ERROR) {}	// don't blame earlier errors on the import
-
-		const GLuint64 lStep = 0x10000;	// 64 KB
-		GLuint64 lMinSize = ((GLuint64)alWidth * alHeight * 4 + lStep - 1) & ~(lStep - 1);
-		GLenum lLastError = GL_NO_ERROR;
-		for(GLuint64 lSize = lMinSize; lSize <= lMinSize * 2 && glGlTexture==0; lSize += lStep)
-		{
-			GLuint lMemory = 0, lTexture = 0;
-			glCreateMemoryObjectsEXT(1, &lMemory);
-			GLint lDedicated = GL_TRUE;
-			glMemoryObjectParameterivEXT(lMemory, GL_DEDICATED_MEMORY_OBJECT_EXT, &lDedicated);
-			glImportMemoryWin32HandleEXT(lMemory, lSize, GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT, ahShared);
-
-			glGenTextures(1, &lTexture);
-			glBindTexture(GL_TEXTURE_2D, lTexture);
-			glTexStorageMem2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, alWidth, alHeight, lMemory, 0);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-			GLenum lError = glGetError();
-			while(glGetError() != GL_NO_ERROR) {}
-			if(lError == GL_NO_ERROR)
-			{
-				glGlMemory = lMemory;
-				glGlTexture = lTexture;
-				Log("Remix: shared texture imported into OpenGL (%dx%d, %llu bytes)\n", alWidth, alHeight, (unsigned long long)lSize);
-			}
-			else
-			{
-				// Log only when the kind of failure changes, not every step
-				if(lError != lLastError)
-					Log("Remix: OpenGL import with %llu bytes failed (GL error 0x%04x)\n", (unsigned long long)lSize, lError);
-				lLastError = lError;
-				glDeleteTextures(1, &lTexture);
-				glDeleteMemoryObjectsEXT(1, &lMemory);
-			}
-		}
-
-		glBindTexture(GL_TEXTURE_2D, (GLuint)lPrevTexture);
-		if(glGlTexture==0) Error("Remix: could not import the shared texture into OpenGL\n");
-		return glGlTexture != 0;
-	}
-
-	//-----------------------------------------------------------------------
-
-	// Draw Remix's image over the whole current frame buffer, in place of the
-	// world. Plain OpenGL with every touched state saved and restored, since the
-	// engine caches its GL state.
-	static void DrawSharedTexture()
-	{
-		GLint lPrevProgram = 0, lPrevActiveTexture = 0, lPrevTexture = 0;
-		glGetIntegerv(GL_CURRENT_PROGRAM, &lPrevProgram);
-		glGetIntegerv(GL_ACTIVE_TEXTURE, &lPrevActiveTexture);
-		glActiveTexture(GL_TEXTURE0);
-		glGetIntegerv(GL_TEXTURE_BINDING_2D, &lPrevTexture);
-		glPushAttrib(GL_ALL_ATTRIB_BITS);
-
-		glUseProgram(0);
-		glDisable(GL_DEPTH_TEST);
-		glDisable(GL_STENCIL_TEST);
-		glDisable(GL_BLEND);
-		glDisable(GL_ALPHA_TEST);
-		glDisable(GL_CULL_FACE);
-		glDisable(GL_SCISSOR_TEST);
-		glDisable(GL_LIGHTING);
-		glDisable(GL_FOG);
-		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-		glEnable(GL_TEXTURE_2D);
-		glBindTexture(GL_TEXTURE_2D, glGlTexture);
-		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-
-		glMatrixMode(GL_TEXTURE);		glPushMatrix(); glLoadIdentity();
-		glMatrixMode(GL_PROJECTION);	glPushMatrix(); glLoadIdentity();
-		glMatrixMode(GL_MODELVIEW);		glPushMatrix(); glLoadIdentity();
-
-		// Remix's first row is the top of the image; OpenGL's t=0 is that row
-		glBegin(GL_QUADS);
-		glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -1.0f);
-		glTexCoord2f(1.0f, 1.0f); glVertex2f( 1.0f, -1.0f);
-		glTexCoord2f(1.0f, 0.0f); glVertex2f( 1.0f,  1.0f);
-		glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f,  1.0f);
-		glEnd();
-
-		glMatrixMode(GL_TEXTURE);		glPopMatrix();
-		glMatrixMode(GL_PROJECTION);	glPopMatrix();
-		glMatrixMode(GL_MODELVIEW);		glPopMatrix();
-
-		glPopAttrib();
-		glBindTexture(GL_TEXTURE_2D, (GLuint)lPrevTexture);
-		glActiveTexture((GLenum)lPrevActiveTexture);
-		glUseProgram((GLuint)lPrevProgram);
-	}
-
-	//-----------------------------------------------------------------------
-
 	static bool Startup()
 	{
 		gbStartupTried = true;
@@ -426,28 +217,8 @@ namespace hpl {
 		int lHeight = clientRect.bottom - clientRect.top;
 		gbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
 
-		////////////////////////////////
-		// Load Remix from the exe's folder (it finds its dependencies there)
-		wchar_t sDllPath[MAX_PATH];
-		GetModuleFileNameW(NULL, sDllPath, MAX_PATH);
-		wchar_t *pFileName = wcsrchr(sDllPath, L'\\');
-		if(pFileName) wcscpy_s(pFileName + 1, MAX_PATH - (pFileName + 1 - sDllPath), L"d3d9.dll");
-
-		remixapi_ErrorCode lResult = remixapi_lib_loadRemixDllAndInitialize(sDllPath, &gRemix, &ghRemixDll);
-		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
-		{
-			Error("Remix: could not load '%ls' (error %d)\n", sDllPath, lResult);
-			return false;
-		}
-
-		if(CreateRemixDevice(lWidth, lHeight)==false) return false;
-
-		HANDLE hShared = CreateSharedTexture(lWidth, lHeight);
-		if(hShared==NULL) return false;
-		if(ImportIntoOpenGL(hShared, lWidth, lHeight)==false) return false;
-
-		// Start with Remix's UI closed (no first-use guide)
-		gRemix.SetConfigVariable("rtx.showUI", "0");
+		if(gRemixContext.Init(lWidth, lHeight)==false) return false;
+		gpRemix = gRemixContext.GetApi();
 
 		Log("Remix: started off-screen at %dx%d, %s mode, F9 toggles (light scale %.1f, flip V %d, normal maps %d)\n",
 			lWidth, lHeight, gbRtxActive ? "RTX" : "classic", gfLightScale, gbFlipV, gbNormalMaps);
@@ -464,7 +235,7 @@ namespace hpl {
 		{
 			if(meshIt->first.second == apMaterial)
 			{
-				if(meshIt->second) gRemix.DestroyMesh(meshIt->second);
+				if(meshIt->second) gpRemix->DestroyMesh(meshIt->second);
 				gmapMeshCounts.erase(meshIt->first);
 				meshIt = gmapMeshes.erase(meshIt);
 			}
@@ -474,7 +245,7 @@ namespace hpl {
 		std::map<cMaterial*, remixapi_MaterialHandle>::iterator matIt = gmapMaterials.find(apMaterial);
 		if(matIt != gmapMaterials.end())
 		{
-			if(matIt->second) gRemix.DestroyMaterial(matIt->second);
+			if(matIt->second) gpRemix->DestroyMaterial(matIt->second);
 			gmapMaterials.erase(matIt);
 		}
 		gmapMaterialAlbedo.erase(apMaterial);
@@ -486,9 +257,9 @@ namespace hpl {
 	static void ClearCaches()
 	{
 		for(std::map<tMeshKey, remixapi_MeshHandle>::iterator it = gmapMeshes.begin(); it != gmapMeshes.end(); ++it)
-			if(it->second) gRemix.DestroyMesh(it->second);
+			if(it->second) gpRemix->DestroyMesh(it->second);
 		for(std::map<cMaterial*, remixapi_MaterialHandle>::iterator it = gmapMaterials.begin(); it != gmapMaterials.end(); ++it)
-			if(it->second) gRemix.DestroyMaterial(it->second);
+			if(it->second) gpRemix->DestroyMaterial(it->second);
 
 		Log("Remix: world destroyed, dropped %d cached meshes and %d materials\n", (int)gmapMeshes.size(), (int)gmapMaterials.size());
 		gmapMeshes.clear();
@@ -591,7 +362,7 @@ namespace hpl {
 		}
 
 		remixapi_MaterialHandle hMaterial = NULL;
-		remixapi_ErrorCode lResult = gRemix.CreateMaterial(&materialInfo, &hMaterial);
+		remixapi_ErrorCode lResult = gpRemix->CreateMaterial(&materialInfo, &hMaterial);
 		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
 			Warning("Remix: CreateMaterial failed for '%s' (error %d)\n", apMaterial->GetName().c_str(), lResult);
 
@@ -618,7 +389,7 @@ namespace hpl {
 				return it->second;
 
 			++glStaleMeshHits;
-			if(it->second) gRemix.DestroyMesh(it->second);	// then rebuild below
+			if(it->second) gpRemix->DestroyMesh(it->second);	// then rebuild below
 			gmapMeshes.erase(it);
 		}
 
@@ -666,7 +437,7 @@ namespace hpl {
 		meshInfo.surfaces_values = &surface;
 		meshInfo.surfaces_count = 1;
 
-		remixapi_ErrorCode lResult = gRemix.CreateMesh(&meshInfo, &hMesh);
+		remixapi_ErrorCode lResult = gpRemix->CreateMesh(&meshInfo, &hMesh);
 		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
 		{
 			Warning("Remix: CreateMesh failed (error %d)\n", lResult);
@@ -726,7 +497,7 @@ namespace hpl {
 		instanceInfo.mesh = hMesh;
 		instanceInfo.transform = ToRemixTransform(apObject->GetModelMatrix(apFrustum));
 		instanceInfo.doubleSided = true;
-		gRemix.DrawInstance(&instanceInfo);
+		gpRemix->DrawInstance(&instanceInfo);
 	}
 
 	//-----------------------------------------------------------------------
@@ -766,9 +537,9 @@ namespace hpl {
 		lightInfo.radiance = { color.r * gfLightScale, color.g * gfLightScale, color.b * gfLightScale };
 
 		remixapi_LightHandle hLight = NULL;
-		if(gRemix.CreateLight(&lightInfo, &hLight) == REMIXAPI_ERROR_CODE_SUCCESS)
+		if(gpRemix->CreateLight(&lightInfo, &hLight) == REMIXAPI_ERROR_CODE_SUCCESS)
 		{
-			gRemix.DrawLightInstance(hLight);
+			gpRemix->DrawLightInstance(hLight);
 			gvFrameLights.push_back(hLight);
 		}
 	}
@@ -837,7 +608,7 @@ namespace hpl {
 		cameraInfo.sType = REMIXAPI_STRUCT_TYPE_CAMERA_INFO;
 		cameraInfo.pNext = &cameraParams;
 		cameraInfo.type = REMIXAPI_CAMERA_TYPE_WORLD;
-		gRemix.SetupCamera(&cameraInfo);
+		gpRemix->SetupCamera(&cameraInfo);
 
 		////////////////////////////////
 		// Solid and translucent objects the OpenGL renderer drew this frame
@@ -849,7 +620,7 @@ namespace hpl {
 
 		////////////////////////////////
 		// Lights: recreate each frame, keeping each light's hash stable
-		for(size_t i=0; i<gvFrameLights.size(); ++i) gRemix.DestroyLight(gvFrameLights[i]);
+		for(size_t i=0; i<gvFrameLights.size(); ++i) gpRemix->DestroyLight(gvFrameLights[i]);
 		gvFrameLights.clear();
 		for(int i=0; i<pRenderList->GetLightNum(); ++i)
 			DrawLight(pRenderList->GetLight(i));
@@ -867,30 +638,21 @@ namespace hpl {
 		vStepMs[ePerfStep_RemixScene] = fNow - fStepStart;
 		fStepStart = fNow;
 
-		remixapi_PresentInfo presentInfo = {};
-		presentInfo.sType = REMIXAPI_STRUCT_TYPE_PRESENT_INFO;
-		gRemix.Present(&presentInfo);	// renders, and presents to the hidden window
+		gRemixContext.Present();
 
 		fNow = NowMs();
 		vStepMs[ePerfStep_RemixPresent] = fNow - fStepStart;
 		fStepStart = fNow;
 
-		////////////////////////////////
-		// Copy Remix's final image into the shared texture, wait until the copy
-		// is done (the simple, conservative sync for now), then draw it in place
-		// of the world. Post effects and the GUI then draw on top as usual.
-		gRemix.dxvk_CopyRenderingOutput(gpSharedSurface, REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR);
-		if(gpCopyDoneQuery)
-		{
-			gpCopyDoneQuery->Issue(D3DISSUE_END);
-			while(gpCopyDoneQuery->GetData(NULL, 0, D3DGETDATA_FLUSH) == S_FALSE) Sleep(0);
-		}
+		// Remix's image in place of the world; post effects and the GUI then draw
+		// on top as usual
+		gRemixContext.CopyFrame();
 
 		fNow = NowMs();
 		vStepMs[ePerfStep_CopyWait] = fNow - fStepStart;
 		fStepStart = fNow;
 
-		DrawSharedTexture();
+		gRemixContext.DrawFrame();
 
 		vStepMs[ePerfStep_Draw] = NowMs() - fStepStart;
 		RecordPerf(vStepMs);
