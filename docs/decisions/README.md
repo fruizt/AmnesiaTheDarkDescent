@@ -13,3 +13,4 @@ Each record has: **Status**, **Context** (the problem and what we knew),
 | # | Decision | Status | Date |
 |---|---|---|---|
 | [0001](0001-remix-frame-shown-through-opengl.md) | RTX mode: Remix renders off-screen, OpenGL shows its frame | Accepted | 2026-11-16 |
+| [0002](0002-renderer-remix.md) | `cRendererRemix`, a renderer of its own for RTX mode | Accepted | 2026-11-16 |
