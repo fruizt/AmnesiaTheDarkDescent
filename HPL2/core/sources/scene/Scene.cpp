@@ -48,7 +48,7 @@
 #include "physics/Physics.h"
 
 #ifdef HPL_REMIX
-#include "impl/RemixSpike.h"
+#include "impl/RendererRemix.h"
 #endif
 
 
@@ -186,6 +186,12 @@ namespace hpl {
 		//Increase the frame count (do this at top, so render count is valid until this Render is called again!)
 		iRenderer::IncRenderFrameCount();
 
+#ifdef HPL_REMIX
+		// RTX mode (F9): the first world viewport of the frame that would use the
+		// main (deferred) renderer is drawn by the Remix renderer instead
+		cRendererRemix *pRemixRenderer = static_cast<cRendererRemix*>(mpGraphics->GetRenderer(eRenderer_Remix));
+		if(pRemixRenderer) pRemixRenderer->UpdateModeToggle();
+#endif
 
 		///////////////////////////////////////////
 		// Iterate all viewports and render
@@ -203,6 +209,15 @@ namespace hpl {
 			cCamera *pCamera = pViewPort->GetCamera();
 			cFrustum *pFrustum = pCamera ? pCamera->GetFrustum() : NULL;
 
+#ifdef HPL_REMIX
+			if(	pRemixRenderer && pRenderer == mpGraphics->GetRenderer(eRenderer_Main) &&
+				(alFlags & tSceneRenderFlag_World) && pViewPort->GetWorld() && pFrustum &&
+				pRemixRenderer->ClaimViewport())
+			{
+				pRenderer = pRemixRenderer;
+			}
+#endif
+
 			//////////////////////////////////////////////
 			//Render world and call callbacks
 			if(alFlags & tSceneRenderFlag_World)
@@ -217,18 +232,12 @@ namespace hpl {
 				if(pRenderer && pViewPort->GetWorld() && pFrustum)
 				{
 					START_TIMING(RenderWorld)
-#ifdef HPL_REMIX
-					cRemixSpike::OnBeforeWorldRender();
-#endif
 					pRenderer->Render(	afFrameTime,pFrustum,
 										pViewPort->GetWorld(),pViewPort->GetRenderSettings(), 
 										pViewPort->GetRenderTarget(),
 										bPostEffects,
 										pViewPort->GetRendererCallbackList());
 					STOP_TIMING(RenderWorld)
-#ifdef HPL_REMIX
-					cRemixSpike::OnWorldRendered(pRenderer, pCamera);
-#endif
 				}
 				else
 				{
@@ -347,7 +356,9 @@ namespace hpl {
 	void cScene::DestroyWorld(cWorld* apWorld)
 	{
 #ifdef HPL_REMIX
-		cRemixSpike::OnWorldDestroyed();
+		// Remix's caches are keyed by engine pointers the next world may reuse
+		cRendererRemix *pRemixRenderer = static_cast<cRendererRemix*>(mpGraphics->GetRenderer(eRenderer_Remix));
+		if(pRemixRenderer) pRemixRenderer->OnWorldDestroyed();
 #endif
 		STLFindAndDelete(mlstWorlds,apWorld);
 	}

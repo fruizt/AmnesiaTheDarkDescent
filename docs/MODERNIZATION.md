@@ -318,6 +318,21 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
 - Not covered yet: bigger levels, many lights, particles, skinned characters,
   and the real cost of the OpenGL world render on the GPU in RTX mode.
 
+**`cRendererRemix` (decision [0002](decisions/0002-renderer-remix.md)), 2026-11-16:**
+- Build steps 1 and 2 are done. `cRemixContext` owns Remix and the interop,
+  `cRemixScene` translates meshes, materials and lights, and `cRendererRemix`
+  (`eRenderer_Remix`) draws the first world viewport of each frame in RTX
+  mode. The spike is deleted.
+- Remix gets everything within 50 m (`HPL_REMIX_RADIUS`), not just what's on
+  screen. In Rainy Hall that's ~700 objects and ~70 lights, versus ~140 objects
+  before. Gathering plus handing the scene over takes ~0.6 ms, Remix itself
+  7.5–8.8 ms, and it holds 60 FPS at 1600x900. Old Archives: ~790 objects,
+  33–45 lights, similar timings. The OpenGL world render no longer runs in RTX
+  mode.
+- RTX mode works in the main menu's 3D background too.
+- Seen in play: the "veil" is still there, and **the player's hands don't show**
+  in RTX mode.
+
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world
 would be, then draws its post effects, menus and HUD on top as usual.

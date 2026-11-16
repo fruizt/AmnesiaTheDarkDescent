@@ -1,6 +1,6 @@
 # Run the built game using the data from an installed copy of the game.
 # Usage: .\run-windows.ps1 [-Arch x64|Win32] [-GameDir <path>] [-Config Release|Debug] [-Remix]
-#   -Remix: enable the RTX Remix spike (x64; see docs/MODERNIZATION.md).
+#   -Remix: enable RTX mode through RTX Remix (x64; see docs/decisions/0002).
 #           In game: F9 toggles classic/RTX.
 # The game folder is only read, never written to.
 param(

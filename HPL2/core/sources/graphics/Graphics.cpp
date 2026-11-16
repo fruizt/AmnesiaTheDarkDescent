@@ -54,6 +54,9 @@
 #include "graphics/RendererDeferred.h"
 #include "graphics/RendererWireFrame.h"
 #include "graphics/RendererSimple.h"
+#ifdef HPL_REMIX
+#include "impl/RendererRemix.h"
+#endif
 
 namespace hpl {
 
@@ -174,6 +177,9 @@ namespace hpl {
 			mvRenderers[eRenderer_Main] = hplNew(cRendererDeferred, (this, apResources));
 			mvRenderers[eRenderer_WireFrame] = hplNew(cRendererWireFrame, (this, apResources));
 			mvRenderers[eRenderer_Simple] = hplNew(cRendererSimple, (this, apResources));
+#ifdef HPL_REMIX
+			mvRenderers[eRenderer_Remix] = hplNew(cRendererRemix, (this, apResources));
+#endif
 
 			for(size_t i=0; i<mvRenderers.size(); ++i)
 			{
@@ -226,6 +232,7 @@ namespace hpl {
 		for(size_t i=0; i< mvRenderers.size(); ++i)
 		{
 			iRenderer *pRenderer = mvRenderers[i];
+			if(pRenderer==NULL) continue;	// e.g. eRenderer_Remix in builds without it
 
 			pRenderer->Update(afTimeStep);
 		}
@@ -247,6 +254,7 @@ namespace hpl {
 		for(size_t i=0; i< mvRenderers.size(); ++i)
 		{
 			iRenderer *pRenderer = mvRenderers[i];
+			if(pRenderer==NULL) continue;
 
 			pRenderer->DestroyData();
 			pRenderer->LoadData();

@@ -229,10 +229,10 @@ ELSEIF(WIN32)
         sources/impl/GamepadXInput.cpp
     )
     IF(WIN64)
-        # RTX Remix spike (docs/MODERNIZATION.md); active at runtime with HPL_REMIX=1
-        OPTION(HPL_REMIX "Build the RTX Remix spike (64-bit Windows)" ON)
+        # RTX mode through RTX Remix (docs/decisions/0002); active at runtime with HPL_REMIX=1
+        OPTION(HPL_REMIX "Build RTX mode through RTX Remix (64-bit Windows)" ON)
         IF(HPL_REMIX)
-            LIST(APPEND impl_sources sources/impl/RemixSpike.cpp sources/impl/RemixContext.cpp)
+            LIST(APPEND impl_sources sources/impl/RemixContext.cpp sources/impl/RemixScene.cpp sources/impl/RendererRemix.cpp)
         ENDIF()
     ENDIF()
 ENDIF()

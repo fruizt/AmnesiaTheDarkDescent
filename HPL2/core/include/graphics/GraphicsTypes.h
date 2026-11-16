@@ -67,6 +67,7 @@ namespace hpl {
 		eRenderer_Main,
 		eRenderer_WireFrame,
 		eRenderer_Simple,
+		eRenderer_Remix,	// RTX mode (cRendererRemix); NULL in builds without HPL_REMIX
 		eRenderer_LastEnum,
 	};
 	
