@@ -30,7 +30,7 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
 | ogg / vorbis / theora | old | Current source | Easy (not yet checked) |
 | GLEW | old | Current source | Easy (not yet checked) |
 | DevIL | 1.7.8 | 1.8.0 from source (needs libpng etc.) | Medium (not yet checked) |
-| Newton | 2.00 | **2.36** source: <https://github.com/sigmaco/newton-v2.36> (`coreLibrary_200`) | Medium |
+| Newton | 2.00 | **2.36** source: <https://github.com/sigmaco/newton-v2.36> (`coreLibrary_200`) | Windows x64: builds and passes tests (1 patch); HPL2 call sites still to port |
 | AngelScript | 2.19.2 | Windows x64: **same 2.19.2** from source. macOS arm64: **2.37.0 or newer** | Windows: Easy. Mac arm64: Hardest |
 | FLTK | — | Only used by the Linux launcher | Skip |
 
@@ -48,8 +48,22 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
   - `NewtonWorldForEachBodyInAABBDo` and its `NewtonBodyIterator` callback gained
     a `void* userData` parameter.
   - The other 12 callback types HPL2 passes are unchanged.
-- Not yet verified: that 2.36 compiles for x64/arm64 (may need its SIMD code
-  disabled), the mirror's license (Newton 2.x was zlib), physics feel vs 2.00.
+- **License:** every source file carries Julio Jerez's zlib license. The
+  sigmaco mirror's README claims "study only, all rights reserved", but a
+  redistributor can't narrow the author's zlib grant; the file headers govern.
+- **Verified on Windows x64 2026-11-15** (MSVC 14.52, static lib with
+  `_NEWTON_STATIC_LIB`), fetched by `fetch-deps.cmake` (core library only):
+  - Build all of `core/`, `physics/`, `newton/` except `dgVehicleConstraint.cpp`
+    (dead: includes a missing header). Newton's own VS2010 file lists are stale.
+  - **Bug fixed by patch:** `dgMemory.h` detected 64-bit with `__x86_64__` only
+    (GCC/Clang), so MSVC x64 used the 32-bit memory block size and corrupted the
+    heap inside `NewtonCreate`. Now also checks `_M_X64`.
+  - Test (scratch program, C API used like `PhysicsWorldNewton`): free fall
+    matches 0.5·g·t² within 2 cm, box rests on the floor at the right height,
+    contact callback reports normals and forces, ray cast and AABB query work.
+    Passed for HPL2's three solver/friction settings and with 4 threads, in
+    Release and Debug (no Newton asserts).
+- Not yet verified: arm64, and physics feel vs 2.00 in the real game.
 
 ### AngelScript findings
 - The game registers 262 script functions (`amnesia/src/game/LuxScriptHandler.cpp`
