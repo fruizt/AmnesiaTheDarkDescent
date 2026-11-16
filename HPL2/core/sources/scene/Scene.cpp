@@ -47,6 +47,10 @@
 
 #include "physics/Physics.h"
 
+#ifdef HPL_REMIX
+#include "impl/RemixSpike.h"
+#endif
+
 
 namespace hpl {
 
@@ -219,6 +223,9 @@ namespace hpl {
 										bPostEffects,
 										pViewPort->GetRendererCallbackList());
 					STOP_TIMING(RenderWorld)
+#ifdef HPL_REMIX
+					cRemixSpike::OnWorldRendered(pRenderer, pCamera);
+#endif
 				}
 				else
 				{

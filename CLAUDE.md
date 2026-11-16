@@ -6,10 +6,12 @@ sounds, shaders in `core/shaders`) is NOT in the repo; it comes from an owned
 Steam install and must not be committed or redistributed.
 
 ## Goal
-Revitalize the game: modern 64-bit builds (Windows x64 first, macOS arm64), then a
-Vulkan rendering backend, then hardware ray tracing (developed on a Windows PC
-with an RTX 4070 Ti Super). Status, findings and the plan live in
-[docs/MODERNIZATION.md](docs/MODERNIZATION.md) — read it before starting work.
+A visual remaster: path-traced lighting in an "RTX mode" through the RTX Remix API
+(top priority: find out whether it works), the OpenGL renderer kept as "classic
+mode", and better assets shipped through the engine so both modes benefit.
+Windows x64 build done (developed on a PC with an RTX 4070 Ti Super). Status,
+decisions and the plan live in [docs/MODERNIZATION.md](docs/MODERNIZATION.md) —
+read it before starting work.
 
 ## Working conventions
 - Never add Claude/AI attribution to commits or PRs (no `Co-Authored-By`, no

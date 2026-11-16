@@ -50,6 +50,23 @@ function(fetch_dep folder url sha256)
     set(FETCHED_${folder} TRUE PARENT_SCOPE)
 endfunction()
 
+# fetch_file(<path under external/> <url> <sha256>): a single file, not an archive
+function(fetch_file path url sha256)
+    set(dest "${EXTERNAL_DIR}/${path}")
+    if(EXISTS "${dest}")
+        return()
+    endif()
+    message(STATUS "${path}: downloading ${url}")
+    file(DOWNLOAD "${url}" "${dest}"
+        EXPECTED_HASH SHA256=${sha256}
+        STATUS status)
+    list(GET status 0 code)
+    if(NOT code EQUAL 0)
+        file(REMOVE "${dest}")
+        message(FATAL_ERROR "${path}: download failed: ${status}")
+    endif()
+endfunction()
+
 # patch_dep(<folder> <file inside it> <old text> <new text>)
 # Our fixes to third-party code, applied right after a fresh download.
 # Fails loudly if <old text> isn't there, so a changed download can't slip by.
@@ -88,3 +105,23 @@ fetch_dep(newton-2.36
 patch_dep(newton-2.36 source/core/dgMemory.h
     "#ifdef __x86_64__"
     "#if defined(__x86_64__) || defined(_M_X64)")
+
+# RTX Remix SDK (API 0.6.5) from the remix-1.6.1 tag, matching the runtime below:
+# the C API header, its C++ wrapper, and NVIDIA's minimal C example (a
+# path-traced triangle), used to check that the runtime works.
+set(REMIX_SDK_URL https://raw.githubusercontent.com/NVIDIAGameWorks/dxvk-remix/remix-1.6.1)
+fetch_file(remix-sdk-1.6.1/include/remix/remix_c.h
+    ${REMIX_SDK_URL}/public/include/remix/remix_c.h
+    26a5607a07e8718298c35519e53bbc71d526186a947e5a2a5b613a0d6db04f3a)
+fetch_file(remix-sdk-1.6.1/include/remix/remix.h
+    ${REMIX_SDK_URL}/public/include/remix/remix.h
+    29346184db11fe92b809a6c13ed31d8c53eea4fa28111a943e3a4ad8e1224136)
+fetch_file(remix-sdk-1.6.1/example/remixapi_example_c.c
+    ${REMIX_SDK_URL}/tests/rtx/apps/RemixAPI_C/remixapi_example_c.c
+    869a06ea29832984b57a5b17bcdb834342bb7e30d085c51f78ef364756f23ef7)
+
+# RTX Remix runtime 1.6.1 for x64 apps (path-traced renderer, Remix API 0.6.5).
+# d3d9.dll is a thin proxy; the API implementation sits next to it.
+fetch_dep(remix-1.6.1
+    https://github.com/NVIDIAGameWorks/rtx-remix/releases/download/remix-1.6.1/rtx-remix-for-x64-games-release-remix-1.6.1.zip
+    7dd1d44492a609050e44b0e3581cec31135d1ed88b4a91123b4faae91955716a)

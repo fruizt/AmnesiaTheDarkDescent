@@ -1,10 +1,12 @@
 # Run the built game using the data from an installed copy of the game.
-# Usage: .\run-windows.ps1 [-Arch x64|Win32] [-GameDir <path>] [-Config Release|Debug]
+# Usage: .\run-windows.ps1 [-Arch x64|Win32] [-GameDir <path>] [-Config Release|Debug] [-Remix]
+#   -Remix: also show the RTX Remix spike window (x64; see docs/MODERNIZATION.md)
 # The game folder is only read, never written to.
 param(
     [ValidateSet("x64", "Win32")][string]$Arch = "x64",
     [string]$GameDir = "F:\SteamLibrary\steamapps\common\Amnesia The Dark Descent",
-    [string]$Config = "Release"
+    [string]$Config = "Release",
+    [switch]$Remix
 )
 $ErrorActionPreference = "Stop"
 
@@ -25,6 +27,11 @@ if ($Arch -eq "Win32") {
         if (-not (Test-Path $dest)) { Copy-Item (Join-Path $GameDir "$dll.dll") $dest }
     }
 }
+
+# The game inherits these environment variables
+$env:HPL_REMIX = if ($Remix) { "1" } else { "0" }
+# Remix settings from the repo (remix\rtx.conf), not the game folder
+$env:DXVK_RTX_CONFIG_FILE = if ($Remix) { Join-Path $PSScriptRoot "remix\rtx.conf" } else { "" }
 
 # The engine uses the working directory as the game folder
 Start-Process $Exe -WorkingDirectory $GameDir

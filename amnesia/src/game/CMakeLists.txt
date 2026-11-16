@@ -56,6 +56,9 @@ add_executable(Amnesia MACOSX_BUNDLE WIN32
     ${full_sources}
 )
 target_link_libraries(Amnesia HPL2)
+if(COMMAND HplAddRemixRuntime)
+	HplAddRemixRuntime(Amnesia)
+endif()
 set_target_properties(Amnesia PROPERTIES
 	COMPILE_DEFINITIONS "${compile_defs}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Game-Info.plist"

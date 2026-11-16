@@ -136,7 +136,13 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
 2. **Cross-platform 64-bit builds** from one CMake setup. Windows x64 done
    (2026-11-15). Still to do: macOS arm64 (needs AngelScript 2.37+ and the same
    vcpkg-style libraries), and a longer play-through to confirm physics.
-3. **Vulkan backend, no RT**, matching the OpenGL look. Rendering is behind
+3. **RTX through RTX Remix (current top priority).** See "Decisions" below.
+   First a spike to find out whether it works at all.
+
+Deferred (only if we want our own vendor-neutral RT later, e.g. official
+AMD/Intel support or lighter hybrid effects for mid-range cards):
+
+4. **Vulkan backend, no RT**, matching the OpenGL look. Rendering is behind
    interfaces, so the renderer and game code don't change. OpenGL classes to
    mirror: `cLowLevelGraphicsSDL` (`iLowLevelGraphics`, 88 pure virtuals),
    `cSDLTexture` (`iTexture`), `cFrameBufferGL` (`iFrameBuffer`),
@@ -148,7 +154,7 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
    cache), and the 28 GLSL 1.20 shaders (loaded from the game data's
    `core/shaders`) must be rewritten and compiled to SPIR-V.
    Keep the OpenGL backend working to compare side by side.
-4. **Hybrid ray tracing on Windows** (`VK_KHR_acceleration_structure`,
+5. **Hybrid ray tracing on Windows** (`VK_KHR_acceleration_structure`,
    `VK_KHR_ray_query` / `VK_KHR_ray_tracing_pipeline`): RT shadows first, then
    AO (replacing SSAO), reflections, bounce lighting. Full path tracing would
    need material/art rework. DLSS later.
@@ -156,6 +162,115 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
 Mac note: MoltenVK 1.4.2 (2026-07) exposes no ray tracing extensions (a WIP PR
 exists), and the M2 has no RT hardware (Apple added it with M3). The Vulkan
 raster backend can be developed on the Mac; RT work happens on Windows.
+
+## Decisions (2026-11-15)
+The goal is a **visual remaster**: path-traced lighting plus better assets.
+- **RTX mode through the RTX Remix API**, not our own ray tracer, if the spike
+  shows it works. Remix's capture mode can't be used (it intercepts DirectX 9;
+  Amnesia is OpenGL with GLSL shaders and a deferred renderer). The **Remix API**
+  lets an engine hand Remix its meshes, materials, lights and camera directly.
+  Plan: a `cRendererRemix` beside `cRendererDeferred` (scene-level `iRenderer`).
+  Remix's runtime is 64-bit, which the Windows x64 build now provides.
+- **Classic mode stays**: the OpenGL renderer, for players without RTX. Remix
+  officially needs an NVIDIA RTX card (recommended RTX 4070+); AMD RX 6000+
+  runs it unofficially and slower; non-RT cards can't. Renderer chosen in settings.
+- **Assets ship through the engine, not only through Remix**: upscaled/new
+  textures (DDS with mipmaps) in a mod folder searched before the originals
+  (`resources.cfg`), so classic mode benefits too. Classic mode uses diffuse,
+  normal, specular and height maps; PBR-only maps (roughness, metalness) show in
+  RTX mode. Remix's AI texture tools are one way to make them, not a dependency.
+  Needs a texture-quality setting for low-VRAM cards (Amnesia has one).
+- **Mod, not a replacement install**: our exe and files live in the game folder
+  beside the original and never modify its files (e.g. `.map_cache_n236`), so
+  the original game keeps working. Requires an owned copy; original assets are
+  Frictional's (ask them before a public release of derived textures).
+- **No Vulkan or DirectX 12 for now.** If ever needed: Vulkan preferred (Linux and
+  Steam Deck native, Mac raster via MoltenVK; HLSL usable via DXC). DX12 is a bit
+  less verbose with better Windows tooling (PIX); both are explicit pipeline APIs.
+- **Stay on SDL2.** SDL3 brings nothing needed for RTX (its GPU API has no ray
+  tracing); migrate later if useful.
+- Other remaster areas (engine work, unaffected by the renderer choice): physics
+  feel (Newton 2.36), animations (new `.dae` assets), new content (needs the
+  editors built on Windows), HRTF audio (OpenAL Soft supports it), widescreen UI.
+
+Next steps, riskiest first:
+1. **Remix API spike**: one level path-traced with a fly-through camera, no
+   gameplay or menus. Unknowns: sharing the window with OpenGL (presentation),
+   skinned/animated meshes, particles/decals/fog, material conversion quality.
+   See "Remix API findings" below for the phases.
+2. **Texture override test**: a few upscaled textures in a mod folder, confirmed
+   in classic mode.
+
+## Remix API findings (2026-11-15)
+Source: <https://github.com/NVIDIAGameWorks/dxvk-remix> (zlib, active), docs
+`documentation/RemixSDK.md`, header `public/include/remix/remix_c.h` (C, plus a
+C++ wrapper `remix.h`), examples `tests/rtx/apps/RemixAPI_C/remixapi_example_c.c`
+and `tests/rtx/apps/RemixAPI/remixapi_skinning_test.cpp`.
+- Works for any 64-bit app without D3D9: `remixapi_lib_loadRemixDllAndInitialize`
+  (explicit DLL loading, no link changes), `Startup` with an `HWND`, register
+  meshes/materials/lights, then per frame `SetupCamera`, `DrawInstance`,
+  `DrawLightInstance`, `Present`. Marked "under development"; mostly tested by
+  the Remix Toolkit's own renderer (the main risk).
+- Prebuilt runtime: release **remix-1.6.1** (2026-10-23),
+  `rtx-remix-for-x64-games-release-remix-1.6.1.zip` (531 MB), API **0.6.5**. Use
+  the header from the `remix-1.6.1` tag (apps built against 0.6.x need 0.6.y
+  binaries).
+- Mapping to Amnesia:
+  - Vertex format is fixed (`remixapi_HardcodedVertex`: position, normal, uv,
+    color); a mesh is surfaces of triangles, each with a material.
+  - Materials take **file paths**: albedo, normal, tangent, emissive, height,
+    roughness, metallic (+ constants). Amnesia's diffuse/normal/height map
+    directly; its specular maps need converting to roughness (or constants).
+    Unknown: whether Remix loads Amnesia's DXT `.dds` and `.tga` files as-is.
+  - Point lights = sphere lights; spot lights = sphere + `shaping` (cone angle,
+    softness). No light gobo (projected texture) found.
+  - Skinning: per-vertex bone weights/indices on the mesh, bone transforms per
+    instance (`InstanceInfoBoneTransformsEXT`).
+  - Presentation: `StartupInfo.forceNoVkSwapchain` + `dxvk_GetExternalSwapchain`
+    hand the frame over as a `VkImage`, meant for presenting through OpenGL
+    interop, so our OpenGL menus/HUD could draw on top.
+
+Spike phases:
+- **Phase 0, runtime check** (small): fetch the 1.6.1 x64 package and header
+  into `external/`, build the official C triangle example, see it path-traced
+  on this PC.
+- **Phase 1, static level**: load a map with the engine, convert static meshes,
+  materials (diffuse/normal only) and lights to Remix, fly a camera through it.
+  Present to a separate window first to avoid the OpenGL interop question.
+- **Phase 2, decide**: measure frame rate at 1440p with DLSS, judge the look,
+  then try OpenGL interop presentation, one animated enemy, and material
+  conversion. Go/no-go for `cRendererRemix`.
+
+## Remix spike status (2026-11-16, `rtx-remix` branch)
+- **Phase 0 done:** NVIDIA's C example renders path-traced through the API on
+  the RTX 4070 Ti Super (Shader Execution Reordering on; DLSS-NR unavailable).
+  `fetch-deps.cmake` pins the runtime zip and the SDK header/example files.
+- **Phase 1 running:** `cRemixSpike` (`HPL2/core/sources/impl/RemixSpike.cpp`),
+  hooked in `cScene::Render` after the world is drawn, mirrors the renderer's
+  current render list (solid + translucent objects, point/spot lights, camera)
+  into Remix in a second window. Built when `HPL_REMIX` is on (64-bit Windows),
+  active with `.\run-windows.ps1 -Remix`. Amnesia geometry and textures render;
+  translucent/alpha-test materials map to Remix blend/alpha-test modes.
+- Lessons:
+  - **Smart App Control** blocks Remix (its USD DLLs are unsigned). It's off on
+    the dev PC; a public release would hit this for players who have it on.
+  - The exe must sit **next to Remix's DLLs** (the shim loads dependencies from
+    the application folder). CMake hard-links the runtime into the build output.
+  - Remix writes `rtx-remix\` (logs), `<exe>.dxvk-cache`, `metrics.txt` and
+    `remix-shim.log` into the **working directory** (the game folder).
+  - **Keyboard died with Remix on:** Remix's default `rtx.useNewGuiInputMethod`
+    creates an overlay that registers the keyboard as raw input with
+    `RIDEV_NOLEGACY`, stopping `WM_KEYDOWN` for the whole process (mouse kept
+    working). Fixed in `remix/rtx.conf` (startup-only option), which
+    `run-windows.ps1 -Remix` passes via `DXVK_RTX_CONFIG_FILE`. Also set from
+    code: `rtx.showUI=0`, `rtx.blockInputToGameInUI=False`.
+  - Remix's first-use popup saves "allow crash reports / usage tracking" per
+    game folder (`%LOCALAPPDATA%\NVIDIA\RTXRemix\user_settings\<hash>.conf`).
+    Turned off for our folders.
+- Open visual issues: most of a room can be missing or black (geometry or light
+  level?), candle flames show when the candles are unlit (per-object
+  illumination not passed), lights are dim (`HPL_REMIX_LIGHT_SCALE`), no normal
+  maps, animation frozen, no particles/decals yet.
 
 ## Known leads
 - Windows x64: each level load logs "Could not open binary file ...map_cache_n236"

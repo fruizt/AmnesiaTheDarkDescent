@@ -228,6 +228,13 @@ ELSEIF(WIN32)
         sources/impl/ThreadWin32.cpp
         sources/impl/GamepadXInput.cpp
     )
+    IF(WIN64)
+        # RTX Remix spike (docs/MODERNIZATION.md); active at runtime with HPL_REMIX=1
+        OPTION(HPL_REMIX "Build the RTX Remix spike (64-bit Windows)" ON)
+        IF(HPL_REMIX)
+            LIST(APPEND impl_sources sources/impl/RemixSpike.cpp)
+        ENDIF()
+    ENDIF()
 ENDIF()
 
 # Setup buildID source
@@ -383,6 +390,28 @@ target_include_directories(HPL2
 target_compile_definitions(HPL2
     ${HPL2_DEFINES}
 )
+
+if(WIN64 AND HPL_REMIX)
+    set(REMIX_SDK_DIR "${EXTERNAL_DIR}/remix-sdk-1.6.1")
+    set(REMIX_RUNTIME_DIR "${EXTERNAL_DIR}/remix-1.6.1")
+    if(NOT EXISTS "${REMIX_SDK_DIR}/include/remix/remix_c.h" OR NOT EXISTS "${REMIX_RUNTIME_DIR}/d3d9.dll")
+        message(FATAL_ERROR "RTX Remix missing: run 'cmake -P fetch-deps.cmake' in the repo root (or configure with -DHPL_REMIX=OFF)")
+    endif()
+    target_include_directories(HPL2 PRIVATE "${REMIX_SDK_DIR}/include")
+    target_compile_definitions(HPL2 PRIVATE HPL_REMIX)
+endif()
+
+# Remix loads its dependencies from the exe's folder, so the runtime has to sit
+# next to the exe. Hard links: no extra disk space (falls back to copying).
+function(HplAddRemixRuntime target)
+    if(WIN64 AND HPL_REMIX)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -DSRC=${REMIX_RUNTIME_DIR} -DDST=$<TARGET_FILE_DIR:${target}>
+                    -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/cmake/LinkRemixRuntime.cmake
+            VERBATIM)
+    endif()
+endfunction()
+set(REMIX_RUNTIME_DIR ${REMIX_RUNTIME_DIR} PARENT_SCOPE)
 
 if(LINUX)
     set(PLATFORM_LIBS
