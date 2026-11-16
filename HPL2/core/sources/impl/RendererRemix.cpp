@@ -185,9 +185,9 @@ namespace hpl {
 			float fHeldLightRadius = EnvFloat("HPL_REMIX_HELD_LIGHT_RADIUS", 0.5f);
 			bool bFlipV = EnvFlag("HPL_REMIX_FLIP_V");
 			bool bNormalMaps = EnvFlag("HPL_REMIX_NORMAL_MAPS");
-			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, fHeldLightRadius, bFlipV, bNormalMaps));
 			mbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
 			mbDiag = EnvFlag("HPL_REMIX_DIAG");
+			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, fHeldLightRadius, bFlipV, bNormalMaps, mbDiag));
 
 			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.2f, held light radius %.2f m, flip V %d, normal maps %d)\n",
 				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, fHeldLightRadius, bFlipV, bNormalMaps);
@@ -381,7 +381,7 @@ namespace hpl {
 
 		////////////////////////////////
 		// The scene, for this frame
-		mpScene->BeginFrame();	// drops last frame's lights and dynamic meshes
+		mpScene->BeginFrame(mpCurrentWorld->GetName());	// drops last frame's lights and dynamic meshes
 		mpScene->SetCamera(mpCurrentFrustum);
 
 		for(int i=0; i<mpCurrentRenderList->GetSolidObjectNum(); ++i)
@@ -545,10 +545,10 @@ namespace hpl {
 		int lLen = sprintf_s(sLine, "Remix perf: %.1f fps | frame %.2f avg, %.2f max", 1000.0 / fFrameAvg, fFrameAvg, mfTimingMaxFrame);
 		for(int i=eRemixStep_Frame+1; i<eRemixStep_LastEnum && lLen > 0; ++i)
 			lLen += sprintf_s(sLine + lLen, sizeof(sLine) - lLen, " | %s %.2f", gvRemixStepNames[i], mvTimingSum[i] / mlTimingFrames);
-		Log("%s (ms, %d frames; %d objects, %d lights, %d meshes / %d materials cached, stale rebuilt: %d / %d)\n",
+		Log("%s (ms, %d frames; %d objects, %d lights, %d meshes / %d materials cached, stale geometry: %d, duplicate names: %d)\n",
 			sLine, mlTimingFrames,
 			mpCurrentRenderList->GetSolidObjectNum() + mpCurrentRenderList->GetTransObjectNum(), mpCurrentRenderList->GetLightNum(),
-			mpScene->GetMeshNum(), mpScene->GetMaterialNum(), mpScene->GetStaleMeshHits(), mpScene->GetStaleMaterialHits());
+			mpScene->GetMeshNum(), mpScene->GetMaterialNum(), mpScene->GetStaleMeshHits(), mpScene->GetDuplicateNameNum());
 
 		mlTimingFrames = 0;
 	}

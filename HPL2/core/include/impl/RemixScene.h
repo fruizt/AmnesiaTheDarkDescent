@@ -45,17 +45,27 @@ namespace hpl {
 	// Translates engine objects into Remix resources (docs/decisions/0002):
 	// meshes, materials, lights and the camera. Meshes and materials are created
 	// once and cached; lights are recreated every frame.
+	//
+	// Every Remix resource gets a stable hash (docs/decisions/0003), the same on
+	// every run and machine, since Remix's replacement workflow (Toolkit, mods)
+	// keys everything by it:
+	// - material: its file path, relative to the game folder;
+	// - static mesh: its geometry (positions, normals, UVs, indices) and material;
+	// - dynamic mesh (particles, skinned meshes, billboards...): level, object
+	//   name and material, since its shape changes every frame;
+	// - light: level and light name.
 	class cRemixScene
 	{
 	public:
 		// Tuning: light brightness (1 = matches classic mode at half a light's
 		// radius), emitter radius of hand-held lights, flipping texture V,
-		// normal maps
-		cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps);
+		// normal maps. abLogHashes logs each hash once, with what it's made from.
+		cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps, bool abLogHashes);
 
 		void SetCamera(cFrustum *apFrustum);
-		// Destroys the previous frame's lights and dynamic meshes; call first
-		void BeginFrame();
+		// Destroys the previous frame's lights and dynamic meshes; call first.
+		// The world's name goes into the hashes of lights and dynamic meshes.
+		void BeginFrame(const tString &asWorldName);
 		// Draws one instance of the object this frame (meshes, billboards...).
 		// Objects whose vertex buffer the engine rewrites (particles, skinned
 		// meshes, billboards, beams, ropes) get a new mesh every frame; the
@@ -63,23 +73,35 @@ namespace hpl {
 		void DrawObject(iRenderable *apObject, cFrustum *apFrustum);
 		void DrawLight(iLight *apLight);
 
-		// Everything cached is keyed by engine pointers, which a new world may
-		// reuse: drop it all when a world is destroyed
+		// The geometry fingerprints are keyed by vertex buffer pointers, which a
+		// new world may reuse: drop everything when a world is destroyed
 		void ClearCaches();
 
 		int GetMeshNum(){ return (int)m_mapMeshes.size(); }
 		int GetMaterialNum(){ return (int)m_mapMaterials.size(); }
-		// Cache entries found stale and rebuilt (should stay 0, see ClearCaches)
+		// Vertex buffers whose pointer was reused by another buffer and got
+		// fingerprinted again (should stay 0, see ClearCaches)
 		int GetStaleMeshHits(){ return mlStaleMeshHits; }
-		int GetStaleMaterialHits(){ return mlStaleMaterialHits; }
+		// Names used twice in one frame (lights, dynamic meshes); their hashes
+		// get a counter and may change between runs
+		int GetDuplicateNameNum(){ return mlDuplicateNames; }
 
 	private:
-		typedef std::pair<iVertexBuffer*, cMaterial*> tMeshKey;
+		struct tGeometry
+		{
+			uint64_t mlHash;
+			int mlVtxNum;
+			int mlIdxNum;
+		};
+
+		uint64_t GetMaterialHash(cMaterial *apMaterial);
+		uint64_t GetGeometryHash(iVertexBuffer *apVtxBuffer);
+		uint64_t GetNameHash(const tString &asName, std::map<uint64_t, int> &a_mapUsedThisFrame);
+		void LogHashOnce(uint64_t alHash, const char *asKind, const char *asSource);
 
 		remixapi_MaterialHandle GetMaterial(cMaterial *apMaterial);
 		remixapi_MeshHandle GetMesh(iVertexBuffer *apVtxBuffer, cMaterial *apMaterial);
 		remixapi_MeshHandle CreateMesh(iVertexBuffer *apVtxBuffer, remixapi_MaterialHandle ahMaterial, uint64_t alHash);
-		void InvalidateMaterial(cMaterial *apMaterial);
 		bool IsSkippedEffect(iRenderable *apObject);
 
 		remixapi_Interface *mpApi;
@@ -88,17 +110,21 @@ namespace hpl {
 		cVector3f mvCameraPos;
 		bool mbFlipV;
 		bool mbNormalMaps;
+		bool mbLogHashes;
+
+		tWString msGameDir;	// lower case, '/' separators, ends with '/'
+		uint64_t mlWorldHash;
 
 		cRemixTextureCache mTextureCache;
-		std::map<cMaterial*, remixapi_MaterialHandle> m_mapMaterials;
-		std::map<tMeshKey, remixapi_MeshHandle> m_mapMeshes;
-
-		// What each cache entry was made from. A hit that doesn't match is rebuilt
-		// instead of reused, and counted.
-		std::map<cMaterial*, tWString> m_mapMaterialAlbedo;
-		std::map<tMeshKey, std::pair<int,int> > m_mapMeshCounts;	// vertices, indices
+		std::map<uint64_t, remixapi_MaterialHandle> m_mapMaterials;	// by material hash
+		std::map<uint64_t, remixapi_MeshHandle> m_mapMeshes;			// by geometry + material hash
+		std::map<iVertexBuffer*, tGeometry> m_mapGeometry;
 		int mlStaleMeshHits;
-		int mlStaleMaterialHits;
+		int mlDuplicateNames;
+
+		std::map<uint64_t, int> m_mapLightNamesThisFrame;
+		std::map<uint64_t, int> m_mapObjectNamesThisFrame;
+		std::map<uint64_t, bool> m_mapLoggedHashes;
 
 		std::vector<remixapi_LightHandle> mvFrameLights;
 		std::vector<remixapi_MeshHandle> mvFrameMeshes;	// dynamic meshes, rebuilt every frame

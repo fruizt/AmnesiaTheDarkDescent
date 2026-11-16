@@ -30,6 +30,7 @@
 #include "scene/Light.h"
 #include "scene/LightSpot.h"
 #include "system/LowLevelSystem.h"
+#include "system/String.h"
 
 namespace hpl {
 
@@ -48,6 +49,30 @@ namespace hpl {
 			for(int col=0; col<4; ++col)
 				transform.matrix[row][col] = apMatrix ? apMatrix->m[row][col] : (row==col ? 1.0f : 0.0f);
 		return transform;
+	}
+
+	//-----------------------------------------------------------------------
+
+	// 64-bit FNV-1a: stable, simple hashing of bytes and names
+	static const uint64_t kFnvOffset = 14695981039346656037ull;
+	static const uint64_t kFnvPrime = 1099511628211ull;
+
+	static uint64_t HashBytes(const void *apData, size_t alSize, uint64_t alHash = kFnvOffset)
+	{
+		const unsigned char *pBytes = static_cast<const unsigned char*>(apData);
+		for(size_t i=0; i<alSize; ++i) { alHash ^= pBytes[i]; alHash *= kFnvPrime; }
+		return alHash;
+	}
+
+	static uint64_t HashString(const tString &asText, uint64_t alHash = kFnvOffset)
+	{
+		return HashBytes(asText.c_str(), asText.size(), alHash);
+	}
+
+	// Combines two hashes (order matters)
+	static uint64_t MixHash(uint64_t alA, uint64_t alB)
+	{
+		return HashBytes(&alB, sizeof(alB), alA);
 	}
 
 	//-----------------------------------------------------------------------
@@ -72,7 +97,7 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	cRemixScene::cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps)
+	cRemixScene::cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps, bool abLogHashes)
 	{
 		mpApi = apApi;
 		mfLightScale = afLightScale;
@@ -80,8 +105,16 @@ namespace hpl {
 		mvCameraPos = cVector3f(0);
 		mbFlipV = abFlipV;
 		mbNormalMaps = abNormalMaps;
+		mbLogHashes = abLogHashes;
+		mlWorldHash = kFnvOffset;
 		mlStaleMeshHits = 0;
-		mlStaleMaterialHits = 0;
+		mlDuplicateNames = 0;
+
+		// The game folder (the working directory), to make paths relative to it
+		wchar_t sDir[MAX_PATH] = {};
+		GetCurrentDirectoryW(MAX_PATH, sDir);
+		msGameDir = cString::ToLowerCaseW(cString::ReplaceCharToW(sDir, _W("\\"), _W("/")));
+		if(msGameDir.empty()==false && msGameDir[msGameDir.size()-1] != L'/') msGameDir += L'/';
 	}
 
 	//-----------------------------------------------------------------------
@@ -138,9 +171,11 @@ namespace hpl {
 		{
 			// Rewritten by the engine every frame: a cached copy would freeze its
 			// first shape (that froze area fog particles into a "veil" in front of
-			// the camera, and the hands in their first pose). Same hash every
+			// the camera, and the hands in their first pose). Its shape can't
+			// identify it, so: level, object name and material. Same hash every
 			// frame, so Remix sees one object moving.
-			uint64_t lHash = ((uint64_t)(uintptr_t)pVtxBuffer) * 31 + (uint64_t)(uintptr_t)apObject->GetMaterial();
+			uint64_t lHash = MixHash(GetNameHash(apObject->GetName(), m_mapObjectNamesThisFrame), GetMaterialHash(apObject->GetMaterial()));
+			LogHashOnce(lHash, "dynamic mesh", apObject->GetName().c_str());
 			hMesh = CreateMesh(pVtxBuffer, GetMaterial(apObject->GetMaterial()), lHash);
 			if(hMesh) mvFrameMeshes.push_back(hMesh);
 		}
@@ -156,7 +191,7 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	void cRemixScene::BeginFrame()
+	void cRemixScene::BeginFrame(const tString &asWorldName)
 	{
 		// Lights are recreated every frame (as the Remix docs say to do for
 		// changing lights), keeping each light's hash stable. So are dynamic meshes.
@@ -164,6 +199,10 @@ namespace hpl {
 		mvFrameLights.clear();
 		for(size_t i=0; i<mvFrameMeshes.size(); ++i) mpApi->DestroyMesh(mvFrameMeshes[i]);
 		mvFrameMeshes.clear();
+
+		mlWorldHash = HashString(cString::ToLowerCase(asWorldName));
+		m_mapLightNamesThisFrame.clear();
+		m_mapObjectNamesThisFrame.clear();
 	}
 
 	//-----------------------------------------------------------------------
@@ -227,7 +266,8 @@ namespace hpl {
 		remixapi_LightInfo lightInfo = {};
 		lightInfo.sType = REMIXAPI_STRUCT_TYPE_LIGHT_INFO;
 		lightInfo.pNext = &sphereInfo;
-		lightInfo.hash = (uint64_t)(uintptr_t)apLight;
+		lightInfo.hash = GetNameHash(apLight->GetName(), m_mapLightNamesThisFrame);
+		LogHashOnce(lightInfo.hash, "light", apLight->GetName().c_str());
 		lightInfo.radiance = { color.r * fRadiance, color.g * fRadiance, color.b * fRadiance };
 
 		remixapi_LightHandle hLight = NULL;
@@ -243,16 +283,137 @@ namespace hpl {
 	void cRemixScene::ClearCaches()
 	{
 		// Meshes first, they reference materials
-		for(std::map<tMeshKey, remixapi_MeshHandle>::iterator it = m_mapMeshes.begin(); it != m_mapMeshes.end(); ++it)
+		for(std::map<uint64_t, remixapi_MeshHandle>::iterator it = m_mapMeshes.begin(); it != m_mapMeshes.end(); ++it)
 			if(it->second) mpApi->DestroyMesh(it->second);
-		for(std::map<cMaterial*, remixapi_MaterialHandle>::iterator it = m_mapMaterials.begin(); it != m_mapMaterials.end(); ++it)
+		for(std::map<uint64_t, remixapi_MaterialHandle>::iterator it = m_mapMaterials.begin(); it != m_mapMaterials.end(); ++it)
 			if(it->second) mpApi->DestroyMaterial(it->second);
 
 		Log("Remix: world destroyed, dropped %d cached meshes and %d materials\n", (int)m_mapMeshes.size(), (int)m_mapMaterials.size());
 		m_mapMeshes.clear();
-		m_mapMeshCounts.clear();
 		m_mapMaterials.clear();
-		m_mapMaterialAlbedo.clear();
+		m_mapGeometry.clear();
+	}
+
+	//-----------------------------------------------------------------------
+
+	// The material file's path relative to the game folder, lower case with '/'
+	// ("static_objects/castlebase/wall/castlebase_wall.mat"). Materials made in
+	// code, without a file, use their name.
+	uint64_t cRemixScene::GetMaterialHash(cMaterial *apMaterial)
+	{
+		if(apMaterial==NULL) return 0;
+
+		const tWString &sPath = apMaterial->GetFullPath();
+		if(sPath.empty()) return HashString("material:" + apMaterial->GetName());
+
+		size_t lStart = 0;
+		if(sPath.size() > msGameDir.size())
+		{
+			bool bInGameDir = true;
+			for(size_t i=0; i<msGameDir.size() && bInGameDir; ++i)
+			{
+				wchar_t c = towlower(sPath[i]);
+				if(c == L'\\') c = L'/';
+				bInGameDir = c == msGameDir[i];
+			}
+			if(bInGameDir) lStart = msGameDir.size();
+		}
+
+		uint64_t lHash = kFnvOffset;
+		for(size_t i=lStart; i<sPath.size(); ++i)
+		{
+			wchar_t c = towlower(sPath[i]);
+			if(c == L'\\') c = L'/';
+			unsigned short lChar = (unsigned short)c;
+			lHash = HashBytes(&lChar, sizeof(lChar), lHash);
+		}
+		return lHash;
+	}
+
+	//-----------------------------------------------------------------------
+
+	// The geometry as drawn: positions, normals, UVs and indices. Computed once
+	// per vertex buffer (static buffers don't change).
+	uint64_t cRemixScene::GetGeometryHash(iVertexBuffer *apVtxBuffer)
+	{
+		std::map<iVertexBuffer*, tGeometry>::iterator it = m_mapGeometry.find(apVtxBuffer);
+		if(it != m_mapGeometry.end())
+		{
+			// A pointer reused by another buffer (should be caught by ClearCaches)
+			if(it->second.mlVtxNum == apVtxBuffer->GetVertexNum() && it->second.mlIdxNum == apVtxBuffer->GetIndexNum())
+				return it->second.mlHash;
+			++mlStaleMeshHits;
+		}
+
+		// Independent of triangle and vertex order: the static geometry the engine
+		// combines at load time ("CombinedObjects") comes out in a different
+		// order on every run. Each triangle is hashed from its three vertices
+		// (only the components sent to Remix: position xyz, normal xyz, UV xy;
+		// position's w isn't always initialized), and the triangle hashes are
+		// summed, so any order gives the same result.
+		int lVtxNum = apVtxBuffer->GetVertexNum();
+		int lIdxNum = apVtxBuffer->GetIndexNum();
+		unsigned int *pIndices = apVtxBuffer->GetIndices();
+
+		const eVertexBufferElement vElements[] = { eVertexBufferElement_Position, eVertexBufferElement_Normal, eVertexBufferElement_Texture0 };
+		const int vUsedComponents[] = { 3, 3, 2 };
+		float *vData[3];
+		int vStride[3], vUsed[3];
+		for(int i=0; i<3; ++i)
+		{
+			vData[i] = apVtxBuffer->GetFloatArray(vElements[i]);
+			vStride[i] = vData[i] ? apVtxBuffer->GetElementNum(vElements[i]) : 0;
+			vUsed[i] = cMath::Min(vUsedComponents[i], vStride[i]);
+		}
+
+		uint64_t lSum = 0;
+		int lTriNum = pIndices ? lIdxNum / 3 : 0;
+		for(int t=0; t<lTriNum; ++t)
+		{
+			uint64_t lTriHash = kFnvOffset;
+			for(int c=0; c<3; ++c)
+			{
+				unsigned int lVtx = pIndices[t*3 + c];
+				if((int)lVtx >= lVtxNum) continue;
+				for(int i=0; i<3; ++i)
+					if(vData[i]) lTriHash = HashBytes(&vData[i][lVtx * vStride[i]], sizeof(float) * vUsed[i], lTriHash);
+			}
+			lSum += lTriHash;
+		}
+		uint64_t lHash = MixHash(MixHash(kFnvOffset, lSum), (uint64_t)lTriNum);
+
+		tGeometry geometry;
+		geometry.mlHash = lHash;
+		geometry.mlVtxNum = lVtxNum;
+		geometry.mlIdxNum = apVtxBuffer->GetIndexNum();
+		m_mapGeometry[apVtxBuffer] = geometry;
+		return lHash;
+	}
+
+	//-----------------------------------------------------------------------
+
+	// Level and name. A name used twice in the same frame gets a counter, and is
+	// counted: such hashes depend on draw order and may change between runs.
+	uint64_t cRemixScene::GetNameHash(const tString &asName, std::map<uint64_t, int> &a_mapUsedThisFrame)
+	{
+		uint64_t lHash = HashString(cString::ToLowerCase(asName), mlWorldHash);
+		int &lUses = a_mapUsedThisFrame[lHash];
+		++lUses;
+		if(lUses == 1) return lHash;
+
+		if(lUses == 2) ++mlDuplicateNames;
+		return MixHash(lHash, (uint64_t)lUses);
+	}
+
+	//-----------------------------------------------------------------------
+
+	void cRemixScene::LogHashOnce(uint64_t alHash, const char *asKind, const char *asSource)
+	{
+		if(mbLogHashes==false) return;
+		bool &bLogged = m_mapLoggedHashes[alHash];
+		if(bLogged) return;
+		bLogged = true;
+		Log("Remix hash %016llx %s '%s'\n", (unsigned long long)alHash, asKind, asSource);
 	}
 
 	//-----------------------------------------------------------------------
@@ -267,23 +428,15 @@ namespace hpl {
 	{
 		if(apMaterial==NULL) return NULL;
 
-		std::map<cMaterial*, remixapi_MaterialHandle>::iterator it = m_mapMaterials.find(apMaterial);
-		if(it != m_mapMaterials.end())
-		{
-			// Safety net: reuse only if the entry was made from this material
-			iTexture *pDiffuse = apMaterial->GetTexture(eMaterialTexture_Diffuse);
-			tWString sNow = pDiffuse ? pDiffuse->GetFullPath() : tWString();
-			if(sNow == m_mapMaterialAlbedo[apMaterial]) return it->second;
-
-			++mlStaleMaterialHits;
-			InvalidateMaterial(apMaterial);	// then rebuild below
-		}
+		// Keyed by what the material is (its file), not where it is in memory
+		uint64_t lMaterialHash = GetMaterialHash(apMaterial);
+		std::map<uint64_t, remixapi_MaterialHandle>::iterator it = m_mapMaterials.find(lMaterialHash);
+		if(it != m_mapMaterials.end()) return it->second;
 
 		// Amnesia's texture files, passed by path (converted to .dds first when
 		// Remix can't load the format)
 		tWString sAlbedo, sNormal, sEmissive;
 		iTexture *pTexture = apMaterial->GetTexture(eMaterialTexture_Diffuse);
-		tWString sAlbedoSource = pTexture ? pTexture->GetFullPath() : tWString();
 		sAlbedo = mTextureCache.GetPath(pTexture);
 		pTexture = apMaterial->GetTexture(eMaterialTexture_NMap);
 		if(mbNormalMaps) sNormal = mTextureCache.GetPath(pTexture);
@@ -308,7 +461,7 @@ namespace hpl {
 		remixapi_MaterialInfo materialInfo = {};
 		materialInfo.sType = REMIXAPI_STRUCT_TYPE_MATERIAL_INFO;
 		materialInfo.pNext = &opaqueInfo;
-		materialInfo.hash = (uint64_t)(uintptr_t)apMaterial;
+		materialInfo.hash = lMaterialHash;
 		materialInfo.albedoTexture = sAlbedo.empty() ? NULL : sAlbedo.c_str();
 		materialInfo.normalTexture = sNormal.empty() ? NULL : sNormal.c_str();
 		materialInfo.emissiveTexture = sEmissive.empty() ? NULL : sEmissive.c_str();
@@ -361,8 +514,8 @@ namespace hpl {
 		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
 			Warning("Remix: CreateMaterial failed for '%s' (error %d)\n", apMaterial->GetName().c_str(), lResult);
 
-		m_mapMaterials[apMaterial] = hMaterial;
-		m_mapMaterialAlbedo[apMaterial] = sAlbedoSource;
+		m_mapMaterials[lMaterialHash] = hMaterial;	// also remembers failures (NULL), so they're tried once
+		LogHashOnce(lMaterialHash, "material", cString::To8Char(apMaterial->GetFullPath()).c_str());
 		return hMaterial;
 	}
 
@@ -370,29 +523,21 @@ namespace hpl {
 
 	remixapi_MeshHandle cRemixScene::GetMesh(iVertexBuffer *apVtxBuffer, cMaterial *apMaterial)
 	{
-		// Material first: if its cache entry was stale, this also drops the meshes
-		// that used it, so the lookup below can't return one of those
-		remixapi_MaterialHandle hMaterial = GetMaterial(apMaterial);
+		// Geometry and material: identical objects (a crate placed 20 times)
+		// share one mesh, drawn as 20 instances
+		uint64_t lHash = MixHash(GetGeometryHash(apVtxBuffer), GetMaterialHash(apMaterial));
+		std::map<uint64_t, remixapi_MeshHandle>::iterator it = m_mapMeshes.find(lHash);
+		if(it != m_mapMeshes.end()) return it->second;
 
-		tMeshKey key(apVtxBuffer, apMaterial);
-		std::map<tMeshKey, remixapi_MeshHandle>::iterator it = m_mapMeshes.find(key);
-		if(it != m_mapMeshes.end())
+		remixapi_MeshHandle hMesh = CreateMesh(apVtxBuffer, GetMaterial(apMaterial), lHash);
+		m_mapMeshes[lHash] = hMesh;	// also remembers failures (NULL), so they're tried once
+		if(mbLogHashes)
 		{
-			// Safety net: reuse only if the entry was made from a buffer of this size
-			const std::pair<int,int> &cached = m_mapMeshCounts[key];
-			if(cached.first == apVtxBuffer->GetVertexNum() && cached.second == apVtxBuffer->GetIndexNum())
-				return it->second;
-
-			++mlStaleMeshHits;
-			if(it->second) mpApi->DestroyMesh(it->second);	// then rebuild below
-			m_mapMeshes.erase(it);
+			char sSource[512];
+			sprintf_s(sSource, "%d vertices, %d indices, material %s", apVtxBuffer->GetVertexNum(), apVtxBuffer->GetIndexNum(),
+						apMaterial ? apMaterial->GetName().c_str() : "-");
+			LogHashOnce(lHash, "mesh", sSource);
 		}
-
-		m_mapMeshCounts[key] = std::pair<int,int>(apVtxBuffer->GetVertexNum(), apVtxBuffer->GetIndexNum());
-
-		uint64_t lHash = ((uint64_t)(uintptr_t)apVtxBuffer) * 31 + (uint64_t)(uintptr_t)apMaterial;
-		remixapi_MeshHandle hMesh = CreateMesh(apVtxBuffer, hMaterial, lHash);
-		m_mapMeshes[key] = hMesh;	// also remembers failures (NULL), so they're tried once
 		return hMesh;
 	}
 
@@ -469,32 +614,6 @@ namespace hpl {
 			hMesh = NULL;
 		}
 		return hMesh;
-	}
-
-	//-----------------------------------------------------------------------
-
-	// Drop a material's Remix resources, and every cached mesh that uses it
-	void cRemixScene::InvalidateMaterial(cMaterial *apMaterial)
-	{
-		std::map<tMeshKey, remixapi_MeshHandle>::iterator meshIt = m_mapMeshes.begin();
-		while(meshIt != m_mapMeshes.end())
-		{
-			if(meshIt->first.second == apMaterial)
-			{
-				if(meshIt->second) mpApi->DestroyMesh(meshIt->second);
-				m_mapMeshCounts.erase(meshIt->first);
-				meshIt = m_mapMeshes.erase(meshIt);
-			}
-			else ++meshIt;
-		}
-
-		std::map<cMaterial*, remixapi_MaterialHandle>::iterator matIt = m_mapMaterials.find(apMaterial);
-		if(matIt != m_mapMaterials.end())
-		{
-			if(matIt->second) mpApi->DestroyMaterial(matIt->second);
-			m_mapMaterials.erase(matIt);
-		}
-		m_mapMaterialAlbedo.erase(apMaterial);
 	}
 
 	//-----------------------------------------------------------------------

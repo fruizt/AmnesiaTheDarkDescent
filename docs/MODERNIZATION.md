@@ -372,6 +372,17 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
   developer options to `remix/rtx.conf` (via `DXVK_RTX_CONFIG_FILE`, so changes
   show in git; it rewrites the file and drops comments) and user options to
   `user.conf` in the working directory (the game folder).
+- **Fog from level data:** `cRendererRemix::UpdateFog` sets Remix's air from each
+  level's fog. It works but changes little, which led to decision
+  [0003](decisions/0003-rtx-look-real-light-sources.md): RTX mode is lit by
+  real light sources, and the look is tuned with Remix's tools.
+- **Stable hashes (0003 step 1, verified):** materials hash their file path
+  relative to the game folder, static meshes their geometry (order-independent:
+  the engine's combined static objects come out in a different triangle order
+  every run, and position's w isn't always initialized) plus material, dynamic
+  meshes and lights hash level + name. With `HPL_REMIX_DIAG=1` every hash is
+  logged once. Two runs each of the menu (49 hashes) and Rainy Hall (519:
+  308 meshes, 138 materials, 40 lights, 33 dynamic) gave identical hashes.
 
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world
