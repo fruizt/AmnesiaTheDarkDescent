@@ -353,3 +353,10 @@ MigrationBackup/
 /build/
 /HPL2/dependencies/
 BuildID_*_MacOSX.cpp
+
+# Third-party source downloaded by fetch-deps.cmake
+/external/
+
+# Intermediate folders of the old Visual Studio 2010 projects
+/amnesia/_temp/
+/HPL2/_temp/

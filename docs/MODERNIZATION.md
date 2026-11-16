@@ -31,7 +31,7 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
 | GLEW | old | Current source | Easy (not yet checked) |
 | DevIL | 1.7.8 | 1.8.0 from source (needs libpng etc.) | Medium (not yet checked) |
 | Newton | 2.00 | **2.36** source: <https://github.com/sigmaco/newton-v2.36> (`coreLibrary_200`) | Medium |
-| AngelScript | 2.19.2 | **2.37.0 or newer** (latest release 2.38.0) | Hardest |
+| AngelScript | 2.19.2 | Windows x64: **same 2.19.2** from source. macOS arm64: **2.37.0 or newer** | Windows: Easy. Mac arm64: Hardest |
 | FLTK | — | Only used by the Linux launcher | Skip |
 
 ### Newton findings
@@ -60,6 +60,22 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
   2.35/2.36 would mis-handle calls on Apple Silicon.
 - Not yet measured: API changes 2.19.2 → 2.38.0 in the parts HPL2 uses, and
   whether Amnesia's `.hps` level scripts still compile.
+- **Windows x64 needs no upgrade.** The 2.19.2 source is still published
+  (angelcode.com) and already has `as_callfunc_x64_msvc.cpp/.asm`. Its
+  `angelscript.h` matches the bundled one except a 3-line Frictional patch
+  (`return 0;` → `asSFuncPtr dummy; return dummy;`, around line 955).
+- **Verified 2026-11-15:** 2.19.2 builds as x64 with MSVC 14.52 (VS 2026) and
+  native calls work (`AS_X64_MSVC`, no `AS_MAX_PORTABILITY`). A test program
+  using the engine's own `scriptstring.cpp`/`scripthelper.cpp` passed in Debug and
+  Release: `asCALL_STDCALL` functions with every return type the game uses
+  (`void`, `bool`, `float`, `int`, `string&`), 5–8 mixed int/float/double/bool/
+  string arguments, global properties, the `THISCALL` message callback, and both
+  `cSqScript::Run` paths. Needed one engine fix: `scriptstring.cpp` registers
+  `resize` through a wrapper, since MSVC's `std::string::resize` has no
+  one-argument overload. The `.asm` file must be compiled from a path inside the
+  build tree (`ml64` won't create nested output folders).
+- Third-party source is downloaded into the git-ignored `external/` by
+  `cmake -P fetch-deps.cmake`, pinned by version and SHA-256.
 
 ## The road to ray tracing
 1. **Modernize dependencies.** Investigate the risky two first: build Newton 2.36
