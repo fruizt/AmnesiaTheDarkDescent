@@ -42,6 +42,8 @@
 
 #include <cstdlib>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace hpl {
 
@@ -136,6 +138,8 @@ namespace hpl {
 		mfLastDiagLog = -1;
 		mbMenuRestoreRelativeMouse = false;
 		mpMenuRestoreGrabbedWindow = NULL;
+		mlTuningFileTime = 0;
+		mfLastTuningCheck = -1;
 		mpFogWorld = NULL;
 		mfFogTransmittance = -1;
 		mfFogEnd = -1;
@@ -182,19 +186,23 @@ namespace hpl {
 		if(mpScene==NULL)
 		{
 			mfRadius = EnvFloat("HPL_REMIX_RADIUS", 50.0f);
-			float fLightScale = EnvFloat("HPL_REMIX_LIGHT_SCALE", 1.0f);
-			float fHeldLightRadius = EnvFloat("HPL_REMIX_HELD_LIGHT_RADIUS", 0.05f);
 			bool bFlipV = EnvFlag("HPL_REMIX_FLIP_V");
 			const char *sNormalMaps = getenv("HPL_REMIX_NORMAL_MAPS");
 			bool bNormalMaps = sNormalMaps==NULL || sNormalMaps[0] != '0';	// on unless "0"
 			bool bFlipNormalY = EnvFlag("HPL_REMIX_NORMAL_FLIP_Y");
 			mbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
 			mbDiag = EnvFlag("HPL_REMIX_DIAG");
-			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, fHeldLightRadius, bFlipV, bNormalMaps, mbDiag));
+			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), 1.0f, 0.05f, bFlipV, bNormalMaps, mbDiag));
 			mpScene->SetFlipNormalY(bFlipNormalY);
 
-			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.2f, held light radius %.2f m, flip V %d, normal maps %d, flip normal Y %d)\n",
-				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, fHeldLightRadius, bFlipV, bNormalMaps, bFlipNormalY);
+			// Light values come from the tuning file, re-read while running
+			const char *sTuningFile = getenv("HPL_REMIX_TUNING_FILE");
+			if(sTuningFile) msTuningFile = sTuningFile;
+			UpdateTuning(true);
+
+			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, flip V %d, normal maps %d, flip normal Y %d, tuning file '%s')\n",
+				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, bFlipV, bNormalMaps, bFlipNormalY,
+				msTuningFile.empty() ? "none" : msTuningFile.c_str());
 		}
 
 		////////////////////////////////////
@@ -232,6 +240,8 @@ namespace hpl {
 	void cRendererRemix::UpdateModeToggle()
 	{
 		if(mpScene==NULL) return;
+
+		UpdateTuning(false);
 
 		// Only while the game window has focus
 		bool bKeyDown = mpLowLevelGraphics->GetWindowInputFocus() && (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
@@ -530,6 +540,52 @@ namespace hpl {
 				mpCurrentWorld->GetFogFalloffExp() != 1.0f ? ", exponent not translated" : "");
 		else
 			Log("Remix: the world has no fog, clear air\n");
+	}
+
+	//-----------------------------------------------------------------------
+
+	// remix/tuning.conf ("name = value" lines, # comments), checked once a
+	// second and applied when it changes, for tuning by eye while playing.
+	// Missing values keep their defaults.
+	void cRendererRemix::UpdateTuning(bool abForce)
+	{
+		if(msTuningFile.empty()) return;
+
+		double fNow = NowMs();
+		if(abForce==false && fNow - mfLastTuningCheck < 1000.0) return;
+		mfLastTuningCheck = fNow;
+
+		WIN32_FILE_ATTRIBUTE_DATA fileData;
+		if(GetFileAttributesExA(msTuningFile.c_str(), GetFileExInfoStandard, &fileData)==FALSE) return;
+		unsigned long long lWriteTime = ((unsigned long long)fileData.ftLastWriteTime.dwHighDateTime << 32) | fileData.ftLastWriteTime.dwLowDateTime;
+		if(abForce==false && lWriteTime == mlTuningFileTime) return;
+		mlTuningFileTime = lWriteTime;
+
+		FILE *pFile = fopen(msTuningFile.c_str(), "r");
+		if(pFile==NULL) return;
+
+		float fLightScale = 1.0f, fHeldLightScale = 1.0f, fHeldLightRadius = 0.05f, fEmissiveIntensity = 1.0f;
+		char sLine[256];
+		while(fgets(sLine, sizeof(sLine), pFile))
+		{
+			char *pComment = strchr(sLine, '#');
+			if(pComment) *pComment = 0;
+
+			char sName[64];
+			float fValue = 0;
+			if(sscanf_s(sLine, " %63[a-z_] = %f", sName, (unsigned)sizeof(sName), &fValue) != 2) continue;
+
+			if(strcmp(sName, "light_scale") == 0)				fLightScale = fValue;
+			else if(strcmp(sName, "held_light_scale") == 0)	fHeldLightScale = fValue;
+			else if(strcmp(sName, "held_light_radius") == 0)	fHeldLightRadius = fValue;
+			else if(strcmp(sName, "emissive_intensity") == 0)	fEmissiveIntensity = fValue;
+			else Warning("Remix: unknown value '%s' in the tuning file\n", sName);
+		}
+		fclose(pFile);
+
+		mpScene->SetTuning(fLightScale, fHeldLightScale, fHeldLightRadius, fEmissiveIntensity);
+		Log("Remix: tuning: light_scale %.3f, held_light_scale %.3f, held_light_radius %.3f m, emissive_intensity %.3f\n",
+			fLightScale, fHeldLightScale, fHeldLightRadius, fEmissiveIntensity);
 	}
 
 	//-----------------------------------------------------------------------

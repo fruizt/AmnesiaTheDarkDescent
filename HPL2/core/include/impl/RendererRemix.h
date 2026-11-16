@@ -50,8 +50,8 @@ namespace hpl {
 	// Options (environment variables):
 	//   HPL_REMIX_START_RTX    1 = start in RTX mode (default: classic)
 	//   HPL_REMIX_RADIUS       meters around the camera sent to Remix (default 50)
-	//   HPL_REMIX_LIGHT_SCALE  light brightness; 1 = as bright as classic mode at half a light's radius (default 1)
-	//   HPL_REMIX_HELD_LIGHT_RADIUS  emitter radius in meters of lights the player holds, like the lantern (default 0.05)
+	//   HPL_REMIX_TUNING_FILE  the live tuning file (remix/tuning.conf, set by run-windows.ps1 -Remix):
+	//                          light brightness, the lantern's, glow intensity; re-read every second
 	//   HPL_REMIX_FLIP_V       1 = flip texture V coordinates (default 0)
 	//   HPL_REMIX_NORMAL_MAPS  0 = don't pass normal maps to Remix (default: on, converted to its encoding)
 	//   HPL_REMIX_NORMAL_FLIP_Y  1 = flip the normal maps' green channel (if bumps look lit from the wrong side)
@@ -87,6 +87,7 @@ namespace hpl {
 
 		void AddNodeObjectsInRadius(iRenderableContainerNode *apNode, const cVector3f &avCenter, tRenderableFlag alNeededFlags);
 		void UpdateFog();
+		void UpdateTuning(bool abForce);
 		void RecordTimings(const double *apStepMs);
 		void LogObjectsNearCamera();
 
@@ -104,6 +105,11 @@ namespace hpl {
 		float mfRadius;
 		bool mbDiag;
 		double mfLastDiagLog;
+
+		// The live tuning file (HPL_REMIX_TUNING_FILE)
+		tString msTuningFile;
+		unsigned long long mlTuningFileTime;
+		double mfLastTuningCheck;
 
 		// The fog values last sent to Remix
 		cWorld *mpFogWorld;

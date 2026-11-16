@@ -33,6 +33,8 @@ if ($Arch -eq "Win32") {
 $env:HPL_REMIX = if ($Remix) { "1" } else { "0" }
 # Remix settings from the repo (remix\rtx.conf), not the game folder
 $env:DXVK_RTX_CONFIG_FILE = if ($Remix) { Join-Path $PSScriptRoot "remix\rtx.conf" } else { "" }
+# Our own values for RTX mode (remix\tuning.conf), re-read by the game while running
+$env:HPL_REMIX_TUNING_FILE = if ($Remix) { Join-Path $PSScriptRoot "remix\tuning.conf" } else { "" }
 
 # The engine uses the working directory as the game folder
 Start-Process $Exe -WorkingDirectory $GameDir

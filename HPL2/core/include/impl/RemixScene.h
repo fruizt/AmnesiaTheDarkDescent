@@ -65,6 +65,12 @@ namespace hpl {
 		// Flips the green channel of converted normal maps
 		void SetFlipNormalY(bool abX){ mTextureCache.SetFlipNormalY(abX); }
 
+		// Live tuning (remix/tuning.conf): brightness of all lights (1 = classic
+		// mode at half a light's radius), of held lights on top of that, held
+		// lights' emitter radius, and the intensity of glow maps. A new glow
+		// intensity rebuilds the cached materials.
+		void SetTuning(float afLightScale, float afHeldLightScale, float afHeldLightRadius, float afEmissiveIntensity);
+
 		void SetCamera(cFrustum *apFrustum);
 		// Destroys the previous frame's lights and dynamic meshes; call first.
 		// The world's name goes into the hashes of lights and dynamic meshes.
@@ -110,6 +116,8 @@ namespace hpl {
 		remixapi_Interface *mpApi;
 		float mfLightScale;
 		float mfHeldLightRadius;
+		float mfHeldLightScale;
+		float mfEmissiveIntensity;
 		std::vector<cVector3f> mvGlowCentersNearCamera;	// this frame's glow-mapped objects the player holds
 		cVector3f mvCameraPos;
 		bool mbFlipV;

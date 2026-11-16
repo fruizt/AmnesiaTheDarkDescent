@@ -397,6 +397,12 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
   looks like the sun: brightness and reach are linked for a physical light,
   so the balance is an art decision. Drifting patchy fog was removed from
   `rtx.conf` (it showed as dark smoke in lantern light).
+- **Live tuning file:** `remix/tuning.conf` (`light_scale`, `held_light_scale`,
+  `held_light_radius`, `emissive_intensity`), re-read by the game once a second
+  and logged when applied (`run-windows.ps1 -Remix` passes its path in
+  `HPL_REMIX_TUNING_FILE`). It replaces the light environment variables, and is
+  the place for values chosen by eye. Verified live: changes arrive within a
+  second (the game must have focus, it pauses in the background).
 
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world

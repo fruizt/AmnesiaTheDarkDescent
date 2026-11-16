@@ -115,6 +115,8 @@ namespace hpl {
 		mpApi = apApi;
 		mfLightScale = afLightScale;
 		mfHeldLightRadius = afHeldLightRadius;
+		mfHeldLightScale = 1.0f;
+		mfEmissiveIntensity = 1.0f;
 		mvCameraPos = cVector3f(0);
 		mbFlipV = abFlipV;
 		mbNormalMaps = abNormalMaps;
@@ -135,6 +137,23 @@ namespace hpl {
 	//////////////////////////////////////////////////////////////////////////
 	// PUBLIC METHODS
 	//////////////////////////////////////////////////////////////////////////
+
+	//-----------------------------------------------------------------------
+
+	void cRemixScene::SetTuning(float afLightScale, float afHeldLightScale, float afHeldLightRadius, float afEmissiveIntensity)
+	{
+		mfLightScale = afLightScale;
+		mfHeldLightScale = afHeldLightScale;
+		mfHeldLightRadius = cMath::Max(afHeldLightRadius, 0.005f);
+
+		// Lights are recreated every frame and pick up the rest; the glow
+		// intensity is part of the cached materials
+		if(afEmissiveIntensity != mfEmissiveIntensity)
+		{
+			mfEmissiveIntensity = afEmissiveIntensity;
+			ClearCaches();
+		}
+	}
 
 	//-----------------------------------------------------------------------
 
@@ -278,6 +297,7 @@ namespace hpl {
 				LogHashOnce(MixHash(HashString(apLight->GetName()), 0x48454c44ull), "held light", sSource);
 			}
 			fEmitterRadius = mfHeldLightRadius;
+			fIntensity *= mfHeldLightScale;
 		}
 
 		// Remix takes radiance: intensity per projected area of the sphere
@@ -328,7 +348,7 @@ namespace hpl {
 		for(std::map<uint64_t, remixapi_MaterialHandle>::iterator it = m_mapMaterials.begin(); it != m_mapMaterials.end(); ++it)
 			if(it->second) mpApi->DestroyMaterial(it->second);
 
-		Log("Remix: world destroyed, dropped %d cached meshes and %d materials\n", (int)m_mapMeshes.size(), (int)m_mapMaterials.size());
+		Log("Remix: dropped %d cached meshes and %d materials\n", (int)m_mapMeshes.size(), (int)m_mapMaterials.size());
 		m_mapMeshes.clear();
 		m_mapMaterials.clear();
 		m_mapGeometry.clear();
@@ -511,7 +531,7 @@ namespace hpl {
 		materialInfo.albedoTexture = sAlbedo.empty() ? NULL : sAlbedo.c_str();
 		materialInfo.normalTexture = sNormal.empty() ? NULL : sNormal.c_str();
 		materialInfo.emissiveTexture = sEmissive.empty() ? NULL : sEmissive.c_str();
-		materialInfo.emissiveIntensity = sEmissive.empty() ? 0.0f : 1.0f;
+		materialInfo.emissiveIntensity = sEmissive.empty() ? 0.0f : mfEmissiveIntensity;
 		materialInfo.spriteSheetRow = 1;
 		materialInfo.spriteSheetCol = 1;
 		materialInfo.filterMode = 1;	// linear
