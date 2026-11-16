@@ -1,24 +1,29 @@
 # Run the built game using the data from an installed copy of the game.
-# Usage: .\run-windows.ps1 [-GameDir <path>] [-Config Release|Debug]
-# The game's 32-bit DLLs are copied next to our exe; the game folder is only read.
+# Usage: .\run-windows.ps1 [-Arch x64|Win32] [-GameDir <path>] [-Config Release|Debug]
+# The game folder is only read, never written to.
 param(
+    [ValidateSet("x64", "Win32")][string]$Arch = "x64",
     [string]$GameDir = "F:\SteamLibrary\steamapps\common\Amnesia The Dark Descent",
     [string]$Config = "Release"
 )
 $ErrorActionPreference = "Stop"
 
-$ExeDir = Join-Path $PSScriptRoot "build-win32\$Config"
+$BuildDir = if ($Arch -eq "x64") { "build-win64" } else { "build-win32" }
+$ExeDir = Join-Path $PSScriptRoot "$BuildDir\$Config"
 $Exe = Join-Path $ExeDir "Amnesia.exe"
-if (-not (Test-Path $Exe)) { throw "Not built yet: run .\build-windows.ps1 first" }
+if (-not (Test-Path $Exe)) { throw "Not built yet: run .\build-windows.ps1 -Arch $Arch first" }
 if (-not (Test-Path (Join-Path $GameDir "core"))) { throw "No game data in '$GameDir'; pass -GameDir" }
 
-# The DLLs the exe links against (matching the bundled import libraries), plus
-# their own dependencies and OpenAL's Creative backend.
-$dlls = "Newton", "glew32", "libtheora", "DevIL", "zlibwapi", "SDL2",
-        "libvorbisfile", "libvorbis", "libogg", "OpenAL32", "wrap_oal"
-foreach ($dll in $dlls) {
-    $dest = Join-Path $ExeDir "$dll.dll"
-    if (-not (Test-Path $dest)) { Copy-Item (Join-Path $GameDir "$dll.dll") $dest }
+if ($Arch -eq "Win32") {
+    # The 32-bit build links the bundled import libraries, whose DLLs ship with
+    # the game: copy them next to our exe, plus their own dependencies and
+    # OpenAL's Creative backend. (The x64 build gets its DLLs from vcpkg.)
+    $dlls = "Newton", "glew32", "libtheora", "DevIL", "zlibwapi", "SDL2",
+            "libvorbisfile", "libvorbis", "libogg", "OpenAL32", "wrap_oal"
+    foreach ($dll in $dlls) {
+        $dest = Join-Path $ExeDir "$dll.dll"
+        if (-not (Test-Path $dest)) { Copy-Item (Join-Path $GameDir "$dll.dll") $dest }
+    }
 }
 
 # The engine uses the working directory as the game folder

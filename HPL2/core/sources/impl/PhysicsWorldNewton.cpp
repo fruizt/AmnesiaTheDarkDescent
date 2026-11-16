@@ -51,8 +51,11 @@ namespace hpl {
 	cPhysicsWorldNewton::cPhysicsWorldNewton()
 		: iPhysicsWorld()
 	{
-		//mpNewtonWorld = NewtonCreate();
+#if NEWTON_MINOR_VERSION >= 36
+		mpNewtonWorld = NewtonCreate();
+#else
 		mpNewtonWorld = NewtonCreate(NULL, NULL);
+#endif
 
 		if(mpNewtonWorld==NULL){
 			Warning("Couldn't create newton world!\n");
@@ -387,7 +390,11 @@ namespace hpl {
 	//-----------------------------------------------------------------------
 
 	static std::vector<iPhysicsBody*> *gpBodyVec;
-	static void AddNewtonBodyToVector(const NewtonBody* apNewtonBody)//, void* userData)
+#if NEWTON_MINOR_VERSION >= 36
+	static void AddNewtonBodyToVector(const NewtonBody* const apNewtonBody, void* const userData)
+#else
+	static void AddNewtonBodyToVector(const NewtonBody* apNewtonBody)
+#endif
 	{
 		cPhysicsBodyNewton* pBody = (cPhysicsBodyNewton*) NewtonBodyGetUserData(apNewtonBody);
 		gpBodyVec->push_back(pBody);
@@ -397,8 +404,11 @@ namespace hpl {
 	{
 		gpBodyVec = apBodyVec;
 
-		//NewtonWorldForEachBodyInAABBDo(mpNewtonWorld,apBV->GetMin().v, apBV->GetMax().v,AddNewtonBodyToVector, NULL);
+#if NEWTON_MINOR_VERSION >= 36
+		NewtonWorldForEachBodyInAABBDo(mpNewtonWorld,apBV->GetMin().v, apBV->GetMax().v,AddNewtonBodyToVector, NULL);
+#else
 		NewtonWorldForEachBodyInAABBDo(mpNewtonWorld,apBV->GetMin().v, apBV->GetMax().v,AddNewtonBodyToVector);
+#endif
 	}
 	
 	//-----------------------------------------------------------------------

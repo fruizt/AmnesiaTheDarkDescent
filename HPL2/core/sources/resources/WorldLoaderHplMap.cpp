@@ -248,6 +248,12 @@ namespace hpl {
 		{
 			msCacheFileExt = _W("map_cache_fastload");
 		}
+#ifdef HPL_NEWTON_2_36
+		// The cache contains serialized Newton collision meshes. The shipped caches
+		// are Newton 2.00's format, which 2.36 misreads (crash in mesh collision).
+		// Use our own cache files so the original game's caches stay untouched.
+		msCacheFileExt += _W("_n236");
+#endif
 		
 		
 		////////////////////////////////

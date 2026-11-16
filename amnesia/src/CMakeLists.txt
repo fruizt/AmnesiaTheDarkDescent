@@ -19,6 +19,9 @@ endif()
 
 if(MSVC)
     add_compile_options(/MP)    # compile files in parallel
+    # Debug info for Release too (same optimizations), so crash stacks have names
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
     add_definitions(
         -D_CRT_SECURE_NO_WARNINGS
         -D_CRT_NONSTDC_NO_WARNINGS

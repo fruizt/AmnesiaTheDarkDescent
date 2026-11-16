@@ -645,7 +645,8 @@ namespace hpl {
 
 	bool cPlatform::OpenFileOnShell( const tWString& asPath )
 	{
-		int lStatusCode = (int)ShellExecute(NULL, _W("open"), asPath.c_str(), NULL, NULL, SW_SHOWMAXIMIZED);
+		// ShellExecute returns a status code typed as HINSTANCE; the docs say to cast via INT_PTR
+		int lStatusCode = (int)(INT_PTR)ShellExecute(NULL, _W("open"), asPath.c_str(), NULL, NULL, SW_SHOWMAXIMIZED);
 		bool bRet = (lStatusCode > 32);
 
 		tWString sMessage = _W("Cannot open file '") + asPath + _W("' - \n");

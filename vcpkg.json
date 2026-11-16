@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "amnesia-hpl2",
+  "version-string": "1.3.1",
+  "description": "Third-party libraries for the 64-bit Windows build. AngelScript and Newton are built from external/ instead (see fetch-deps.cmake).",
+  "builtin-baseline": "8f363bdc11359ede4bc51e5eb32a2617538049c8",
+  "dependencies": [
+    "sdl2",
+    "libogg",
+    "libvorbis",
+    "libtheora",
+    "glew",
+    "openal-soft",
+    "zlib",
+    {
+      "name": "devil",
+      "default-features": false,
+      "features": [ "libjpeg", "libpng" ],
+      "$comment": "Game textures are DDS and TGA (built in), plus some JPG and one PNG"
+    }
+  ],
+  "overrides": [
+    {
+      "name": "openal-soft",
+      "version": "1.24.3",
+      "port-version": 1,
+      "$comment": "1.25.2 fails to compile with MSVC 19.52 (C++20 ranges in alc.cpp): https://github.com/microsoft/vcpkg/issues/54109. Drop this once fixed."
+    },
+    {
+      "name": "fmt",
+      "version": "11.2.0",
+      "$comment": "openal-soft 1.24.3 uses fmt::format, which fmt 12 moved out of the headers it includes"
+    }
+  ]
+}

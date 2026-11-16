@@ -26,6 +26,37 @@ Last updated 2026-11-15.
   the old `SDL_syswm.h` (packing static assert). Editors and launcher are not
   built on Windows yet. Log: OpenGL 4.6 on the RTX 4070 Ti Super with Shader
   Models 2/3/4 all available (the Mac's GL 2.1 reported 3 and 4 as 0).
+- **Windows 64-bit build works** (2026-11-15, `win64` branch): `.\build-windows.ps1`
+  and `.\run-windows.ps1` (x64 is the default; `-Arch Win32` for the baseline).
+  Reaches "Game Running" on the Steam data. Libraries:
+  - vcpkg manifest `vcpkg.json` (repo root; vcpkg ships with VS): SDL2 2.32.10,
+    ogg/vorbis/theora, GLEW, OpenAL Soft, zlib, DevIL 1.8.0 (only `libjpeg` and
+    `libpng` features: game textures are DDS/TGA plus some JPG and one PNG).
+    vcpkg's toolchain copies the DLLs next to the exe.
+  - OpenAL Soft pinned to 1.24.3 (+ fmt 11.2.0 for it): 1.25.2 doesn't compile
+    with MSVC 19.52 (vcpkg issue #54109). Drop the overrides once fixed.
+  - Newton 2.36 and AngelScript 2.19.2 (+ its x64 MASM file) built from
+    `external/`. The engine's Newton calls use `#if NEWTON_MINOR_VERSION >= 36`
+    so the 2.00 builds (Mac, Win32) keep working. Contact force/normal queries
+    pass body0, which gives 2.00's unflipped values.
+  - The old `HPL2/dependencies/include` is not searched; only its Cg headers are
+    copied to the build (a type name in `LowLevelGraphicsSDL.h`; Cg is only used
+    under `WITH_CG`). `#pragma comment(lib)` names of the old libs are ignored with
+    `/NODEFAULTLIB`. `FindDevIL` picks the debug lib, so it's set per config.
+  - Only pointer-truncation warning was `ShellExecute`'s status code (fixed).
+  - Log: DevIL 1.8.0 (the 1.6.8 cube map warning is gone), OpenAL Soft devices.
+  - **Map caches:** `.map_cache` files hold serialized Newton collision meshes.
+    The shipped ones are Newton 2.00's format; 2.36 misread them and crashed in
+    `dgCollisionConvexPolygon::QuickTest` on the first player move. Builds with
+    Newton 2.36 (`HPL_NEWTON_2_36`, set by the `newton` target) use
+    `.map_cache_n236` instead, so the original game's caches are never touched.
+    The game config defaults to `ForceCacheLoadingAndSkipSaving=true`, so no
+    cache is written: levels build from source (Rainy Hall: 792 ms vs 581 ms
+    cached). For a release we could ship or allow writing `_n236` caches.
+  - Loads a save made by the 32-bit build and plays.
+- Windows builds have a crash handler (`hplCrashHandler`, `LowLevelSystemSDL.cpp`)
+  that writes the call stack to `hpl.log`; Release builds get a `.pdb` (`/Zi`,
+  `/DEBUG`) so it has function names and lines.
 
 ## Why 64-bit, and why the dependencies are the work
 Ray tracing needs far more than a 32-bit process's 4 GB. The engine and game code
@@ -34,11 +65,12 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
 
 | Library | Bundled | Plan | Risk |
 |---|---|---|---|
-| SDL2 | 2.0.3-era | 2.32.10 from source (already done on macOS) | Trivial |
-| ogg / vorbis / theora | old | Current source | Easy (not yet checked) |
-| GLEW | old | Current source | Easy (not yet checked) |
-| DevIL | 1.7.8 | 1.8.0 from source (needs libpng etc.) | Medium (not yet checked) |
-| Newton | 2.00 | **2.36** source: <https://github.com/sigmaco/newton-v2.36> (`coreLibrary_200`) | Windows x64: builds and passes tests (1 patch); HPL2 call sites still to port |
+| SDL2 | 2.0.3-era | 2.32.10 (macOS: from source; Windows x64: vcpkg) | Done |
+| ogg / vorbis / theora | old | vcpkg (Windows x64) | Done on Windows |
+| GLEW | old | vcpkg (Windows x64) | Done on Windows |
+| OpenAL | Creative 32-bit | OpenAL Soft 1.24.3, vcpkg (Windows x64) | Done on Windows |
+| DevIL | 1.7.8 | 1.8.0, vcpkg (Windows x64) | Done on Windows |
+| Newton | 2.00 | **2.36** source: <https://github.com/sigmaco/newton-v2.36> (`coreLibrary_200`) | Done on Windows x64 (1 patch, call sites ported); physics feel still to check |
 | AngelScript | 2.19.2 | Windows x64: **same 2.19.2** from source. macOS arm64: **2.37.0 or newer** | Windows: Easy. Mac arm64: Hardest |
 | FLTK | — | Only used by the Linux launcher | Skip |
 
@@ -100,11 +132,10 @@ have no CPU-specific code, so the work is replacing the prebuilt libraries with
   `cmake -P fetch-deps.cmake`, pinned by version and SHA-256.
 
 ## The road to ray tracing
-1. **Modernize dependencies.** Investigate the risky two first: build Newton 2.36
-   from source and measure the AngelScript upgrade.
-2. **Cross-platform 64-bit builds** from one CMake setup: add Windows x64
-   (Visual Studio 2022+) and macOS arm64. Expect modern-MSVC errors similar to
-   the clang ones already fixed. Verify the game plays the same.
+1. **Modernize dependencies.** Done for Windows x64 (vcpkg + `external/`).
+2. **Cross-platform 64-bit builds** from one CMake setup. Windows x64 done
+   (2026-11-15). Still to do: macOS arm64 (needs AngelScript 2.37+ and the same
+   vcpkg-style libraries), and a longer play-through to confirm physics.
 3. **Vulkan backend, no RT**, matching the OpenGL look. Rendering is behind
    interfaces, so the renderer and game code don't change. OpenGL classes to
    mirror: `cLowLevelGraphicsSDL` (`iLowLevelGraphics`, 88 pure virtuals),
@@ -127,6 +158,12 @@ exists), and the M2 has no RT hardware (Apple added it with M3). The Vulkan
 raster backend can be developed on the Mac; RT work happens on Windows.
 
 ## Known leads
+- Windows x64: each level load logs "Could not open binary file ...map_cache_n236"
+  (expected, no cache yet); harmless noise.
+- Physics feel with Newton 2.36 vs 2.00 still to be judged in play.
+- Windows x64 log: "No valid sound devices available! Using implementation
+  default", then the default OpenAL Soft device opens fine. Settings store
+  `Device="0"`; cause not checked yet.
 - Windows: Steam's `DevIL.dll` is 1.6.8 (2006); the engine expects 1.7.8 and logs
   "Cube Maps may not load correctly". The official Steam build ships the same DLL.
 - Log error at menu load: `Sampler aGoboMap does not exist, could not bind it to unit 5`.

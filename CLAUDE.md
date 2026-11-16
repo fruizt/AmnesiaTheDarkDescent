@@ -31,8 +31,9 @@ concepts with TypeScript analogies and, where useful, tiny compiled demos.
 - macOS (x86_64 via Rosetta): `./build-macos.sh`, then `./run-macos.sh`
   (uses the Steam game data). The script unpacks `HPL2/dependencies.zip`
   and builds SDL 2.32.10 from source.
-- Windows (32-bit, VS 2026): `.\build-windows.ps1`, then `.\run-windows.ps1`
-  (Steam data on `F:\SteamLibrary\...`, override with `-GameDir`). 64-bit is
-  in progress on the `win64` branch; see the plan.
+- Windows (VS 2026): `.\build-windows.ps1`, then `.\run-windows.ps1`
+  (Steam data on `F:\SteamLibrary\...`, override with `-GameDir`). x64 is the
+  default (libraries from vcpkg via `vcpkg.json`, built on first configure);
+  `-Arch Win32` builds the 32-bit baseline with the bundled libraries.
 - Third-party source (AngelScript, Newton) goes in the git-ignored `external/`
   via `cmake -P fetch-deps.cmake`; our fixes to it are `patch_dep` entries there.

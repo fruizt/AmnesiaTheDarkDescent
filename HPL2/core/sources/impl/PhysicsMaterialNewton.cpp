@@ -309,13 +309,23 @@ namespace hpl {
 			if(std::abs(contactData.mfMaxContactTangentSpeed) < std::abs(fTanSpeed1)) contactData.mfMaxContactTangentSpeed = fTanSpeed1;
 
 			//Force
+			// Newton 2.36 takes the body to measure from and flips the sign for
+			// body1; passing body0 gives the same values as 2.00.
 			cVector3f vForce;
+#if NEWTON_MINOR_VERSION >= 36
+			NewtonMaterialGetContactForce(pMaterial,pBody0,vForce.v);
+#else
 			NewtonMaterialGetContactForce(pMaterial,vForce.v);
+#endif
 			contactData.mvForce += vForce;
 
 			//Position and normal
 			cVector3f vPos, vNormal;
+#if NEWTON_MINOR_VERSION >= 36
+			NewtonMaterialGetContactPositionAndNormal(pMaterial,pBody0,vPos.v, vNormal.v);
+#else
 			NewtonMaterialGetContactPositionAndNormal(pMaterial,vPos.v, vNormal.v);
+#endif
 
 			contactData.mvContactNormal += vNormal;
 			contactData.mvContactPosition += vPos;
@@ -333,7 +343,11 @@ namespace hpl {
 
 				cCollidePoint collidePoint;
 				collidePoint.mfDepth = 1;
+#if NEWTON_MINOR_VERSION >= 36
+				NewtonMaterialGetContactPositionAndNormal (pMaterial, pBody0, collidePoint.mvPoint.v, collidePoint.mvNormal.v);
+#else
 				NewtonMaterialGetContactPositionAndNormal (pMaterial, collidePoint.mvPoint.v, collidePoint.mvNormal.v);
+#endif
 
 				pContactBody1->GetWorld()->GetContactPoints()->push_back(collidePoint);
 

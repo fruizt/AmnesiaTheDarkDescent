@@ -68,8 +68,62 @@ extern int hplMain(const hpl::tString &asCommandLine);
 
 #ifdef WIN32
 #include <windows.h>
+#include <dbghelp.h>
+
+// On a crash, write the call stack (function, file, line) to hpl.log.
+// Function names need the .pdb next to the exe (Release builds have one).
+static LONG WINAPI hplCrashHandler(EXCEPTION_POINTERS* apInfo)
+{
+	EXCEPTION_RECORD* pRecord = apInfo->ExceptionRecord;
+	hpl::Error("CRASH: exception 0x%08lx at %p\n", pRecord->ExceptionCode, pRecord->ExceptionAddress);
+	if(pRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && pRecord->NumberParameters >= 2)
+		hpl::Error("  %s address %p\n", pRecord->ExceptionInformation[0] ? "writing" : "reading",
+				   (void*)pRecord->ExceptionInformation[1]);
+
+	HANDLE hProcess = GetCurrentProcess();
+	SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+	SymInitialize(hProcess, NULL, TRUE);
+
+	CONTEXT context = *apInfo->ContextRecord;
+	STACKFRAME64 frame = {};
+#ifdef _WIN64
+	DWORD lMachine = IMAGE_FILE_MACHINE_AMD64;
+	frame.AddrPC.Offset = context.Rip;
+	frame.AddrFrame.Offset = context.Rbp;
+	frame.AddrStack.Offset = context.Rsp;
+#else
+	DWORD lMachine = IMAGE_FILE_MACHINE_I386;
+	frame.AddrPC.Offset = context.Eip;
+	frame.AddrFrame.Offset = context.Ebp;
+	frame.AddrStack.Offset = context.Esp;
+#endif
+	frame.AddrPC.Mode = frame.AddrFrame.Mode = frame.AddrStack.Mode = AddrModeFlat;
+
+	for(int i = 0; i < 32; ++i)
+	{
+		if(!StackWalk64(lMachine, hProcess, GetCurrentThread(), &frame, &context, NULL,
+						SymFunctionTableAccess64, SymGetModuleBase64, NULL)) break;
+
+		char vSymbolBuffer[sizeof(SYMBOL_INFO) + 256] = {};
+		SYMBOL_INFO* pSymbol = (SYMBOL_INFO*)vSymbolBuffer;
+		pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+		pSymbol->MaxNameLen = 255;
+		DWORD64 lDisplacement = 0;
+		const char* sName = SymFromAddr(hProcess, frame.AddrPC.Offset, &lDisplacement, pSymbol) ? pSymbol->Name : "?";
+
+		IMAGEHLP_LINE64 line = { sizeof(IMAGEHLP_LINE64) };
+		DWORD lLineDisplacement = 0;
+		if(SymGetLineFromAddr64(hProcess, frame.AddrPC.Offset, &lLineDisplacement, &line))
+			hpl::Error("  #%d %s (%s:%lu)\n", i, sName, line.FileName, line.LineNumber);
+		else
+			hpl::Error("  #%d %s [%p]\n", i, sName, (void*)frame.AddrPC.Offset);
+	}
+	return EXCEPTION_CONTINUE_SEARCH;	// let Windows report the crash as usual
+}
+
 int WINAPI WinMain(	HINSTANCE hInstance,  HINSTANCE hPrevInstance,LPSTR	lpCmdLine, int nCmdShow)
 {
+	SetUnhandledExceptionFilter(hplCrashHandler);
 	return hplMain(lpCmdLine);
 }
 #else

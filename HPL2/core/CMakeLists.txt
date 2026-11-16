@@ -40,19 +40,41 @@ ENDIF()
 
 OPTION(USE_SDL2 "Use SDL2 instead of SDL1.2" ON)
 
+IF(WIN64)
+    # 64-bit Windows: libraries from vcpkg (vcpkg.json in the repo root).
+    # The old headers in ../dependencies/include are not used at all, so they
+    # can't shadow the new ones; only Cg's headers are still needed, for a type
+    # name in LowLevelGraphicsSDL.h (Cg itself is only used under WITH_CG).
+    find_package(SDL2 CONFIG REQUIRED)
+    find_package(Ogg CONFIG REQUIRED)
+    find_package(Vorbis CONFIG REQUIRED)
+    find_package(unofficial-theora CONFIG REQUIRED)
+    find_package(GLEW REQUIRED)
+    find_package(OpenAL CONFIG REQUIRED)
+    find_package(ZLIB REQUIRED)
+    find_package(DevIL REQUIRED)
+    set(LEGACY_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/legacy-include)
+    file(COPY ../dependencies/include/Cg DESTINATION ${LEGACY_INCLUDE_DIR})
+ENDIF()
+
 IF(WIN32)
     # OALWrapper's own CMakeLists has no Windows support, and it lives in the
     # unpacked (git-ignored) dependencies folder, so define its target here.
-    # Its headers pull in ogg/vorbis/OpenAL libs via #pragma comment(lib).
     file(GLOB oalwrapper_sources ../dependencies/OALWrapper/sources/*.cpp)
     add_library(OALWrapper STATIC ${oalwrapper_sources})
-    target_include_directories(OALWrapper
-        PUBLIC ../dependencies/OALWrapper/include
-        PUBLIC ../dependencies/include
-        PRIVATE ../dependencies/include/SDL2
-    )
+    target_include_directories(OALWrapper PUBLIC ../dependencies/OALWrapper/include)
     target_compile_definitions(OALWrapper PUBLIC $<$<BOOL:${USE_SDL2}>:USE_SDL2>)
-    target_link_directories(OALWrapper PUBLIC ${DEP_LIB_DIR})
+    IF(WIN64)
+        target_link_libraries(OALWrapper PUBLIC
+            OpenAL::OpenAL Vorbis::vorbisfile Vorbis::vorbis Ogg::ogg SDL2::SDL2)
+    ELSE()
+        # Its headers pull in ogg/vorbis/OpenAL libs via #pragma comment(lib)
+        target_include_directories(OALWrapper
+            PUBLIC ../dependencies/include
+            PRIVATE ../dependencies/include/SDL2
+        )
+        target_link_directories(OALWrapper PUBLIC ${DEP_LIB_DIR})
+    ENDIF()
     set(OALWRAPPER_INCLUDE_DIR ../dependencies/OALWrapper/include)
 ELSE()
     add_subdirectory(../dependencies/OALWrapper OALWrapper)
@@ -66,12 +88,20 @@ add_definitions(
     -DUSE_OALWRAPPER
 )
 
+IF(WIN64)
+    set(HPL2_INCLUDES
+        PUBLIC include
+        PRIVATE ${OALWRAPPER_INCLUDE_DIR}
+        PUBLIC ${LEGACY_INCLUDE_DIR}
+    )
+ELSE()
 set(HPL2_INCLUDES
     PUBLIC include
     #Important that this is before dependencies so the correct OpenAL headers are used
     PRIVATE ${OALWRAPPER_INCLUDE_DIR}
     PUBLIC ../dependencies/include
 )
+ENDIF()
 
 IF(LINUX)
     add_library(binreloc STATIC ../dependencies/sources/binreloc/binreloc.c)
@@ -270,28 +300,65 @@ source_group("Platform" REGULAR_EXPRESSION "\\/impl\\/Platform.+")
 
 # setup libs
 
-FindPrebuiltLibrary(NEWTON_LIBRARY Newton)
+set(EXTERNAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../external")
+
 IF(WIN32)
-    # The bundled angelscript.lib was built with VS2010 and needs its old C
-    # runtime. Build the same version (2.19.2) from source instead.
-    set(AS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../external/angelscript-2.19.2/sdk/angelscript")
+    # AngelScript 2.19.2 (the game's version) from source: the bundled VS2010
+    # angelscript.lib needs the old C runtime, and there is no 64-bit one.
+    set(AS_DIR "${EXTERNAL_DIR}/angelscript-2.19.2/sdk/angelscript")
     if(NOT EXISTS "${AS_DIR}/source")
         message(FATAL_ERROR "AngelScript source missing: run 'cmake -P fetch-deps.cmake' in the repo root")
     endif()
     file(GLOB as_sources "${AS_DIR}/source/*.cpp")
+    IF(WIN64)
+        # Native x64 calls need the MASM file. ml64 can't create the nested
+        # output folder CMake picks for sources outside the project, so copy it.
+        enable_language(ASM_MASM)
+        configure_file("${AS_DIR}/source/as_callfunc_x64_msvc.asm"
+                       "${CMAKE_CURRENT_BINARY_DIR}/as_callfunc_x64_msvc.asm" COPYONLY)
+        list(APPEND as_sources "${CMAKE_CURRENT_BINARY_DIR}/as_callfunc_x64_msvc.asm")
+    ENDIF()
     add_library(angelscript STATIC ${as_sources})
     target_include_directories(angelscript PUBLIC "${AS_DIR}/include")
     set(ANGELSCRIPT_LIBRARY angelscript)
 ELSE()
     FindPrebuiltLibrary(ANGELSCRIPT_LIBRARY angelscript)
 ENDIF()
-IF(WIN32)
+
+IF(WIN64)
+    # Newton 2.36 from source (2.00's source was never published)
+    set(NT_DIR "${EXTERNAL_DIR}/newton-2.36/source")
+    if(NOT EXISTS "${NT_DIR}/newton")
+        message(FATAL_ERROR "Newton source missing: run 'cmake -P fetch-deps.cmake' in the repo root")
+    endif()
+    file(GLOB nt_sources "${NT_DIR}/core/*.cpp" "${NT_DIR}/physics/*.cpp" "${NT_DIR}/newton/*.cpp")
+    # Dead file: includes a header that doesn't exist
+    list(FILTER nt_sources EXCLUDE REGEX "dgVehicleConstraint")
+    add_library(newton STATIC ${nt_sources})
+    target_include_directories(newton PRIVATE "${NT_DIR}/core" "${NT_DIR}/physics" PUBLIC "${NT_DIR}/newton")
+    # HPL_NEWTON_2_36: map caches hold serialized Newton collision data, whose
+    # format differs from the 2.00 caches shipped with the game (see WorldLoaderHplMap)
+    target_compile_definitions(newton PUBLIC _NEWTON_STATIC_LIB HPL_NEWTON_2_36 PRIVATE _WIN_64_VER)
+    set(NEWTON_LIBRARY newton)
+
+    set(GLEW_LIBRARY GLEW::GLEW)
+    set(THEORA_LIBRARY unofficial::theora::theora)
+    # FindDevIL can pick the debug lib for every config; choose per config
+    set(VCPKG_TRIPLET_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    set(DEVIL_LIBRARY
+        optimized "${VCPKG_TRIPLET_DIR}/lib/DevIL.lib"
+        debug "${VCPKG_TRIPLET_DIR}/debug/lib/DevIL.lib")
+    set(ZLIB_LIBRARY ZLIB::ZLIB)
+    set(SDL2_LIBRARY SDL2::SDL2)
+ELSEIF(WIN32)
+    FindPrebuiltLibrary(NEWTON_LIBRARY Newton)
     FindPrebuiltLibrary(GLEW_LIBRARY glew32)
     FindPrebuiltLibrary(THEORA_LIBRARY libtheora)
     FindPrebuiltLibrary(DEVIL_LIBRARY DevIL)
     FindPrebuiltLibrary(ZLIB_LIBRARY zlibwapi)
     FindPrebuiltLibrary(SDL2_LIBRARY SDL2)
 ELSE()
+    FindPrebuiltLibrary(NEWTON_LIBRARY Newton)
     FindPrebuiltLibrary(GLEW_LIBRARY GLEW)
     FindPrebuiltLibrary(THEORA_LIBRARY theora)
     FindPrebuiltLibrary(DEVIL_LIBRARY IL)
@@ -333,13 +400,22 @@ elseif(APPLE)
         ${COCOA_LIBRARY}
     )
 elseif(WIN32)
-    # As in the original VS project; Cg, TaskKeyHook, ogg etc. come in through
-    # #pragma comment(lib) in the sources, found via this link directory.
-    target_link_directories(HPL2 PUBLIC ${DEP_LIB_DIR})
     set(PLATFORM_LIBS
         ${SDL2_LIBRARY}
         XInput user32 gdi32 shell32 wininet dbghelp
     )
+    if(WIN64)
+        # The sources name the old 32-bit libs with #pragma comment(lib);
+        # the 64-bit build links targets instead, so ignore those names.
+        foreach(lib Cg CgGL TaskKeyHook SDL newton angelscript openal32
+                    libogg libtheora libvorbis libvorbisfile)
+            target_link_options(HPL2 PUBLIC /NODEFAULTLIB:${lib}.lib)
+        endforeach()
+    else()
+        # As in the original VS project; Cg, TaskKeyHook, ogg etc. come in through
+        # #pragma comment(lib) in the sources, found via this link directory.
+        target_link_directories(HPL2 PUBLIC ${DEP_LIB_DIR})
+    endif()
 endif()
 
 target_link_libraries(HPL2

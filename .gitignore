@@ -352,6 +352,7 @@ MigrationBackup/
 # macOS CMake build (see build-macos.sh)
 /build/
 /build-win32/
+/build-win64/
 /HPL2/dependencies/
 BuildID_*_MacOSX.cpp
 

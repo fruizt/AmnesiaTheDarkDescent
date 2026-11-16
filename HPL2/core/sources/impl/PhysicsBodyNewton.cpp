@@ -44,8 +44,15 @@ namespace hpl {
 		cCollideShapeNewton *pShapeNewton = static_cast<cCollideShapeNewton*>(apShape);
 		
 		mpNewtonWorld = pWorldNewton->GetNewtonWorld();
-		mpNewtonBody = NewtonCreateBody(pWorldNewton->GetNewtonWorld(), 
+#if NEWTON_MINOR_VERSION >= 36
+		// 2.00 created bodies at the identity transform; the real one is set later
+		mpNewtonBody = NewtonCreateBody(pWorldNewton->GetNewtonWorld(),
+										pShapeNewton->GetNewtonCollision(),
+										&cMatrixf::Identity.m[0][0]);
+#else
+		mpNewtonBody = NewtonCreateBody(pWorldNewton->GetNewtonWorld(),
 										pShapeNewton->GetNewtonCollision());
+#endif
 
 		mpCallback = hplNew( cPhysicsBodyNewtonCallback, () );
 
