@@ -17,14 +17,22 @@ if(APPLE)
     endif()
 endif()
 
-# silence some annoying warnings
-add_definitions(
-    -Wno-switch
-    -Wno-reorder
-    -Wno-unused-variable
-    -Wno-unused-function
-    -Wno-c++11-narrowing
-)
+if(MSVC)
+    add_compile_options(/MP)    # compile files in parallel
+    add_definitions(
+        -D_CRT_SECURE_NO_WARNINGS
+        -D_CRT_NONSTDC_NO_WARNINGS
+    )
+else()
+    # silence some annoying warnings
+    add_definitions(
+        -Wno-switch
+        -Wno-reorder
+        -Wno-unused-variable
+        -Wno-unused-function
+        -Wno-c++11-narrowing
+    )
+endif()
 
 add_subdirectory(../../HPL2/core core2)
 
@@ -44,10 +52,12 @@ if(APPLE)
     if(BUILD_MACOSX_LAUNCHER)
         add_subdirectory(launcher-macosx launcher)
     endif()
-else()
+elseif(NOT WIN32)
     add_subdirectory(launcher launcher)
 endif()
 
-add_custom_target(GameRelease
-    DEPENDS Amnesia Launcher
-)
+if(TARGET Launcher)
+    add_custom_target(GameRelease
+        DEPENDS Amnesia Launcher
+    )
+endif()

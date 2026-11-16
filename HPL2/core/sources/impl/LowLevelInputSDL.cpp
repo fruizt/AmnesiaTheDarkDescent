@@ -29,6 +29,12 @@
 
 #include "engine/Engine.h"
 
+#ifdef WIN32
+// Old SDL_syswm.h includes windows.h under SDL's #pragma pack, which current
+// Windows SDKs reject; including it first makes that inner include a no-op.
+#include <windows.h>
+#endif
+
 #if USE_SDL2
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_syswm.h"

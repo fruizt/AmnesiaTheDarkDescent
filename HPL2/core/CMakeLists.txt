@@ -6,7 +6,7 @@ include(BoilerPlate)
 
 set(HPL2_VERSION_MAJOR 2)
 set(HPL2_VERSION_MINOR 0)
-if(IS_APPLE_64)
+if(APPLE AND IS_APPLE_64)
     set(BIN_LIBROOT "${PLATFORM_PREFIX}64")
 else()
     set(BIN_LIBROOT ${PLATFORM_PREFIX})
@@ -40,7 +40,23 @@ ENDIF()
 
 OPTION(USE_SDL2 "Use SDL2 instead of SDL1.2" ON)
 
-add_subdirectory(../dependencies/OALWrapper OALWrapper)
+IF(WIN32)
+    # OALWrapper's own CMakeLists has no Windows support, and it lives in the
+    # unpacked (git-ignored) dependencies folder, so define its target here.
+    # Its headers pull in ogg/vorbis/OpenAL libs via #pragma comment(lib).
+    file(GLOB oalwrapper_sources ../dependencies/OALWrapper/sources/*.cpp)
+    add_library(OALWrapper STATIC ${oalwrapper_sources})
+    target_include_directories(OALWrapper
+        PUBLIC ../dependencies/OALWrapper/include
+        PUBLIC ../dependencies/include
+        PRIVATE ../dependencies/include/SDL2
+    )
+    target_compile_definitions(OALWrapper PUBLIC $<$<BOOL:${USE_SDL2}>:USE_SDL2>)
+    target_link_directories(OALWrapper PUBLIC ${DEP_LIB_DIR})
+    set(OALWRAPPER_INCLUDE_DIR ../dependencies/OALWrapper/include)
+ELSE()
+    add_subdirectory(../dependencies/OALWrapper OALWrapper)
+ENDIF()
 
 SET(HPL2_DEFINES
     PUBLIC $<$<BOOL:${USE_SDL2}>:USE_SDL2>
@@ -170,6 +186,18 @@ ELSEIF(LINUX)
         sources/impl/PlatformUnix.cpp
         sources/impl/PlatformSDL.cpp
     )
+ELSEIF(WIN32)
+    # Same platform files as the original Visual Studio project
+    LIST(REMOVE_ITEM impl_sources
+        sources/impl/MutexSDL.cpp
+        sources/impl/ThreadSDL.cpp
+    )
+    LIST(APPEND impl_sources
+        sources/impl/PlatformWin32.cpp
+        sources/impl/MutexWin32.cpp
+        sources/impl/ThreadWin32.cpp
+        sources/impl/GamepadXInput.cpp
+    )
 ENDIF()
 
 # Setup buildID source
@@ -178,6 +206,8 @@ IF(APPLE)
     SET(BUILDID_SUFFIX MacOSX)
 ELSEIF(LINUX)
     SET(BUILDID_SUFFIX Linux)
+ELSEIF(WIN32)
+    SET(BUILDID_SUFFIX Win32)
 ELSE()
     message(FATAL_ERROR "Unknown platform")
 ENDIF()
@@ -202,11 +232,15 @@ function(GenerateBuildID outvar idname includedir sourcedir)
             ${includedir}/BuildID_${idname}.h PARENT_SCOPE)
 endfunction()
 
+# Windows can't run the Perl script directly; like the original VS project, use
+# the committed BuildID files (nothing calls GetBuildID_HPL2_0 anyway).
+IF(NOT WIN32)
 GenerateBuildID(version_source
     HPL2_0
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/sources
 )
+ENDIF()
 
 # setup source groups
 source_group("AI" REGULAR_EXPRESSION "\\/ai\\/.+")
@@ -237,10 +271,32 @@ source_group("Platform" REGULAR_EXPRESSION "\\/impl\\/Platform.+")
 # setup libs
 
 FindPrebuiltLibrary(NEWTON_LIBRARY Newton)
-FindPrebuiltLibrary(ANGELSCRIPT_LIBRARY angelscript)
-FindPrebuiltLibrary(GLEW_LIBRARY GLEW)
-FindPrebuiltLibrary(THEORA_LIBRARY theora)
-FindPrebuiltLibrary(DEVIL_LIBRARY IL)
+IF(WIN32)
+    # The bundled angelscript.lib was built with VS2010 and needs its old C
+    # runtime. Build the same version (2.19.2) from source instead.
+    set(AS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../external/angelscript-2.19.2/sdk/angelscript")
+    if(NOT EXISTS "${AS_DIR}/source")
+        message(FATAL_ERROR "AngelScript source missing: run 'cmake -P fetch-deps.cmake' in the repo root")
+    endif()
+    file(GLOB as_sources "${AS_DIR}/source/*.cpp")
+    add_library(angelscript STATIC ${as_sources})
+    target_include_directories(angelscript PUBLIC "${AS_DIR}/include")
+    set(ANGELSCRIPT_LIBRARY angelscript)
+ELSE()
+    FindPrebuiltLibrary(ANGELSCRIPT_LIBRARY angelscript)
+ENDIF()
+IF(WIN32)
+    FindPrebuiltLibrary(GLEW_LIBRARY glew32)
+    FindPrebuiltLibrary(THEORA_LIBRARY libtheora)
+    FindPrebuiltLibrary(DEVIL_LIBRARY DevIL)
+    FindPrebuiltLibrary(ZLIB_LIBRARY zlibwapi)
+    FindPrebuiltLibrary(SDL2_LIBRARY SDL2)
+ELSE()
+    FindPrebuiltLibrary(GLEW_LIBRARY GLEW)
+    FindPrebuiltLibrary(THEORA_LIBRARY theora)
+    FindPrebuiltLibrary(DEVIL_LIBRARY IL)
+    SET(ZLIB_LIBRARY z)
+ENDIF()
 
 find_package(OpenGL)
 mark_as_advanced(NEWTON_LIBRARY ANGELSCRIPT_LIBRARY GLEW_LIBRARY THEORA_LIBRARY DEVIL_LIBRARY)
@@ -276,6 +332,14 @@ elseif(APPLE)
         iconv ${SC_LIBRARY}
         ${COCOA_LIBRARY}
     )
+elseif(WIN32)
+    # As in the original VS project; Cg, TaskKeyHook, ogg etc. come in through
+    # #pragma comment(lib) in the sources, found via this link directory.
+    target_link_directories(HPL2 PUBLIC ${DEP_LIB_DIR})
+    set(PLATFORM_LIBS
+        ${SDL2_LIBRARY}
+        XInput user32 gdi32 shell32 wininet dbghelp
+    )
 endif()
 
 target_link_libraries(HPL2
@@ -286,7 +350,7 @@ target_link_libraries(HPL2
     ${GLEW_LIBRARY}
     ${THEORA_LIBRARY}
     ${DEVIL_LIBRARY}
-    z
+    ${ZLIB_LIBRARY}
     ${PLATFORM_LIBS}
 )
 
@@ -344,6 +408,9 @@ ENDFUNCTION()
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../tests/CMakeLists.txt)
     add_subdirectory(../tests tests)
 endif()
-add_subdirectory(../tools tools)
+# The editors need FLTK and more work on Windows; the game comes first
+if(NOT WIN32)
+    add_subdirectory(../tools tools)
+endif()
 
 

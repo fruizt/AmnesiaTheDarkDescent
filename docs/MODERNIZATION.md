@@ -13,11 +13,19 @@ Last updated 2026-11-15.
     fixed fullscreen, HiDPI and Cmd-Tab. Deployment target raised to macOS 10.13.
   - `build/compile_commands.json` is exported and `.vscode/settings.json` points
     the C/C++ extension at it.
-- **Windows build is not modernized.** Only Visual Studio 2010 projects
-  (toolset `v100`, platform `Win32`) and **32-bit** prebuilt libraries in
-  `HPL2/dependencies/lib/win32` (checked: newton, angelscript, SDL2, glew32,
-  DevIL, libvorbis are all x86 32-bit). CMake has no Windows support
-  (`HPL2/core/CMakeLists.txt` stops with "Unknown platform").
+- **Windows 32-bit build works** (2026-11-15, `win64` branch) and runs with the
+  Steam data: `.\build-windows.ps1`, then `.\run-windows.ps1`. This is the
+  baseline before the 64-bit move. CMake gained Windows support (VS 2026,
+  `-A Win32`), using the original VS project's platform files (`PlatformWin32`,
+  `MutexWin32`, `ThreadWin32`, `GamepadXInput`) and the bundled 32-bit libraries
+  in `HPL2/dependencies/lib/win32`, except AngelScript 2.19.2, built from
+  `external/` (the VS2010 `angelscript.lib` needs the old C runtime's
+  `_vsnprintf`). The game's own 32-bit DLLs are copied from the Steam folder.
+  Code fixes for modern MSVC: `std::binary_function` removed from `VideoComp`,
+  `const` comparators in `Renderer.h`/`GuiSet.h`, `<windows.h>` included before
+  the old `SDL_syswm.h` (packing static assert). Editors and launcher are not
+  built on Windows yet. Log: OpenGL 4.6 on the RTX 4070 Ti Super with Shader
+  Models 2/3/4 all available (the Mac's GL 2.1 reported 3 and 4 as 0).
 
 ## Why 64-bit, and why the dependencies are the work
 Ray tracing needs far more than a 32-bit process's 4 GB. The engine and game code
@@ -119,6 +127,8 @@ exists), and the M2 has no RT hardware (Apple added it with M3). The Vulkan
 raster backend can be developed on the Mac; RT work happens on Windows.
 
 ## Known leads
+- Windows: Steam's `DevIL.dll` is 1.6.8 (2006); the engine expects 1.7.8 and logs
+  "Cube Maps may not load correctly". The official Steam build ships the same DLL.
 - Log error at menu load: `Sampler aGoboMap does not exist, could not bind it to unit 5`.
 - Log shows `ShaderModel 3: 0` / `ShaderModel 4: 0` on macOS's legacy GL 2.1
   context; unknown how much quality that disables.

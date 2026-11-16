@@ -25,6 +25,15 @@ if (APPLE)
     )
 endif()
 
+if (WIN32)
+    # Exe icon. Lux.rc itself needs MFC's afxres.h, so generate a minimal one.
+    set(icon_rc "${CMAKE_CURRENT_BINARY_DIR}/LuxIcon.rc")
+    file(WRITE "${icon_rc}" "1 ICON \"${CMAKE_CURRENT_SOURCE_DIR}/Lux.ico\"\n")
+    list(APPEND all_sources
+        ${icon_rc}
+    )
+endif()
+
 set(compile_defs "")
 set(demo_compile_defs "LUX_DEMO_VERSION")
 
@@ -42,7 +51,8 @@ else()
 endif()
 
 
-add_executable(Amnesia MACOSX_BUNDLE
+# WIN32: a GUI program; the engine provides WinMain
+add_executable(Amnesia MACOSX_BUNDLE WIN32
     ${full_sources}
 )
 target_link_libraries(Amnesia HPL2)
@@ -66,7 +76,7 @@ add_definitions(
     -DLINUX
 )
 ENDIF()
-add_executable(AmnesiaDemo MACOSX_BUNDLE EXCLUDE_FROM_ALL
+add_executable(AmnesiaDemo MACOSX_BUNDLE WIN32 EXCLUDE_FROM_ALL
     ${all_sources}
 )
 target_link_libraries(AmnesiaDemo HPL2)
