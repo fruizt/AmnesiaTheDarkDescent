@@ -50,10 +50,13 @@ namespace hpl {
 		cRemixScene(remixapi_Interface *apApi, float afLightScale, bool abFlipV, bool abNormalMaps);
 
 		void SetCamera(cFrustum *apFrustum);
-		// Draws one instance of the object this frame (meshes, billboards...)
+		// Destroys the previous frame's lights and dynamic meshes; call first
+		void BeginFrame();
+		// Draws one instance of the object this frame (meshes, billboards...).
+		// Objects whose vertex buffer the engine rewrites (particles, skinned
+		// meshes, billboards, beams, ropes) get a new mesh every frame; the
+		// others' meshes are cached.
 		void DrawObject(iRenderable *apObject, cFrustum *apFrustum);
-		// Destroys the lights of the previous frame; call before DrawLight
-		void BeginLights();
 		void DrawLight(iLight *apLight);
 
 		// Everything cached is keyed by engine pointers, which a new world may
@@ -71,6 +74,7 @@ namespace hpl {
 
 		remixapi_MaterialHandle GetMaterial(cMaterial *apMaterial);
 		remixapi_MeshHandle GetMesh(iVertexBuffer *apVtxBuffer, cMaterial *apMaterial);
+		remixapi_MeshHandle CreateMesh(iVertexBuffer *apVtxBuffer, remixapi_MaterialHandle ahMaterial, uint64_t alHash);
 		void InvalidateMaterial(cMaterial *apMaterial);
 		bool IsSkippedBillboard(iRenderable *apObject);
 
@@ -90,6 +94,7 @@ namespace hpl {
 		int mlStaleMaterialHits;
 
 		std::vector<remixapi_LightHandle> mvFrameLights;
+		std::vector<remixapi_MeshHandle> mvFrameMeshes;	// dynamic meshes, rebuilt every frame
 	};
 
 	//-----------------------------------------

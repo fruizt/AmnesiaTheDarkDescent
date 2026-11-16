@@ -119,7 +119,21 @@ namespace hpl {
 		iVertexBuffer *pVtxBuffer = apObject->GetVertexBuffer();
 		if(pVtxBuffer==NULL) return;
 
-		remixapi_MeshHandle hMesh = GetMesh(pVtxBuffer, apObject->GetMaterial());
+		remixapi_MeshHandle hMesh = NULL;
+		if(pVtxBuffer->GetUsageType() == eVertexBufferUsageType_Static)
+		{
+			hMesh = GetMesh(pVtxBuffer, apObject->GetMaterial());
+		}
+		else
+		{
+			// Rewritten by the engine every frame: a cached copy would freeze its
+			// first shape (that froze area fog particles into a "veil" in front of
+			// the camera, and the hands in their first pose). Same hash every
+			// frame, so Remix sees one object moving.
+			uint64_t lHash = ((uint64_t)(uintptr_t)pVtxBuffer) * 31 + (uint64_t)(uintptr_t)apObject->GetMaterial();
+			hMesh = CreateMesh(pVtxBuffer, GetMaterial(apObject->GetMaterial()), lHash);
+			if(hMesh) mvFrameMeshes.push_back(hMesh);
+		}
 		if(hMesh==NULL) return;
 
 		remixapi_InstanceInfo instanceInfo = {};
@@ -132,12 +146,14 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	void cRemixScene::BeginLights()
+	void cRemixScene::BeginFrame()
 	{
 		// Lights are recreated every frame (as the Remix docs say to do for
-		// changing lights), keeping each light's hash stable
+		// changing lights), keeping each light's hash stable. So are dynamic meshes.
 		for(size_t i=0; i<mvFrameLights.size(); ++i) mpApi->DestroyLight(mvFrameLights[i]);
 		mvFrameLights.clear();
+		for(size_t i=0; i<mvFrameMeshes.size(); ++i) mpApi->DestroyMesh(mvFrameMeshes[i]);
+		mvFrameMeshes.clear();
 	}
 
 	//-----------------------------------------------------------------------
@@ -332,21 +348,39 @@ namespace hpl {
 			m_mapMeshes.erase(it);
 		}
 
-		remixapi_MeshHandle hMesh = NULL;
-		m_mapMeshes[key] = NULL;	// also remembers failures, so they're tried once
 		m_mapMeshCounts[key] = std::pair<int,int>(apVtxBuffer->GetVertexNum(), apVtxBuffer->GetIndexNum());
 
-		// The vertex buffer's CPU-side copy of its data
+		uint64_t lHash = ((uint64_t)(uintptr_t)apVtxBuffer) * 31 + (uint64_t)(uintptr_t)apMaterial;
+		remixapi_MeshHandle hMesh = CreateMesh(apVtxBuffer, hMaterial, lHash);
+		m_mapMeshes[key] = hMesh;	// also remembers failures (NULL), so they're tried once
+		return hMesh;
+	}
+
+	//-----------------------------------------------------------------------
+
+	// A Remix mesh from the vertex buffer's CPU-side copy of its data
+	remixapi_MeshHandle cRemixScene::CreateMesh(iVertexBuffer *apVtxBuffer, remixapi_MaterialHandle ahMaterial, uint64_t alHash)
+	{
 		float *pPos = apVtxBuffer->GetFloatArray(eVertexBufferElement_Position);
 		float *pNormal = apVtxBuffer->GetFloatArray(eVertexBufferElement_Normal);
 		float *pUv = apVtxBuffer->GetFloatArray(eVertexBufferElement_Texture0);
-		int lVtxNum = apVtxBuffer->GetVertexNum();
+		float *pColor = apVtxBuffer->GetFloatArray(eVertexBufferElement_Color0);
+		unsigned int *pIndices = apVtxBuffer->GetIndices();
+
+		// Only the indices drawn (particles fill part of a buffer sized for the
+		// maximum), and only the vertices those reach
 		int lIdxNum = apVtxBuffer->GetIndexNum();
-		if(pPos==NULL || lVtxNum <= 0 || lIdxNum <= 0) return NULL;
+		if(apVtxBuffer->GetElementNum() >= 0 && apVtxBuffer->GetElementNum() < lIdxNum) lIdxNum = apVtxBuffer->GetElementNum();
+		if(pPos==NULL || pIndices==NULL || lIdxNum <= 0) return NULL;
+
+		int lVtxNum = 0;
+		for(int i=0; i<lIdxNum; ++i) if((int)pIndices[i] + 1 > lVtxNum) lVtxNum = (int)pIndices[i] + 1;
+		if(lVtxNum > apVtxBuffer->GetVertexNum()) return NULL;
 
 		int lPosStride = apVtxBuffer->GetElementNum(eVertexBufferElement_Position);
 		int lNormalStride = pNormal ? apVtxBuffer->GetElementNum(eVertexBufferElement_Normal) : 0;
 		int lUvStride = pUv ? apVtxBuffer->GetElementNum(eVertexBufferElement_Texture0) : 0;
+		int lColorStride = pColor ? apVtxBuffer->GetElementNum(eVertexBufferElement_Color0) : 0;
 
 		std::vector<remixapi_HardcodedVertex> vVertices(lVtxNum);
 		for(int i=0; i<lVtxNum; ++i)
@@ -360,30 +394,40 @@ namespace hpl {
 				vtx.texcoord[0] = pUv[i*lUvStride + 0];
 				vtx.texcoord[1] = mbFlipV ? 1.0f - pUv[i*lUvStride + 1] : pUv[i*lUvStride + 1];
 			}
+
+			// Vertex color (particles fade through it), packed as D3D's ARGB
 			vtx.color = 0xFFFFFFFF;
+			if(pColor && lColorStride >= 4)
+			{
+				const float *pC = &pColor[i*lColorStride];
+				unsigned int lR = (unsigned int)(cMath::Clamp(pC[0], 0.0f, 1.0f) * 255.0f + 0.5f);
+				unsigned int lG = (unsigned int)(cMath::Clamp(pC[1], 0.0f, 1.0f) * 255.0f + 0.5f);
+				unsigned int lB = (unsigned int)(cMath::Clamp(pC[2], 0.0f, 1.0f) * 255.0f + 0.5f);
+				unsigned int lA = (unsigned int)(cMath::Clamp(pC[3], 0.0f, 1.0f) * 255.0f + 0.5f);
+				vtx.color = (lA << 24) | (lR << 16) | (lG << 8) | lB;
+			}
 		}
 
 		remixapi_MeshInfoSurfaceTriangles surface = {};
 		surface.vertices_values = &vVertices[0];
 		surface.vertices_count = (uint64_t)lVtxNum;
-		surface.indices_values = (const uint32_t*)apVtxBuffer->GetIndices();
+		surface.indices_values = (const uint32_t*)pIndices;
 		surface.indices_count = (uint64_t)lIdxNum;
-		surface.material = hMaterial;
+		surface.material = ahMaterial;
 
 		remixapi_MeshInfo meshInfo = {};
 		meshInfo.sType = REMIXAPI_STRUCT_TYPE_MESH_INFO;
-		meshInfo.hash = ((uint64_t)(uintptr_t)apVtxBuffer) * 31 + (uint64_t)(uintptr_t)apMaterial;
+		meshInfo.hash = alHash;
 		meshInfo.surfaces_values = &surface;
 		meshInfo.surfaces_count = 1;
 
+		remixapi_MeshHandle hMesh = NULL;
 		remixapi_ErrorCode lResult = mpApi->CreateMesh(&meshInfo, &hMesh);
 		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
 		{
 			Warning("Remix: CreateMesh failed (error %d)\n", lResult);
 			hMesh = NULL;
 		}
-
-		m_mapMeshes[key] = hMesh;
 		return hMesh;
 	}
 

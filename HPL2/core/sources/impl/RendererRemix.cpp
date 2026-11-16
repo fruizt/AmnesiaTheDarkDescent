@@ -28,7 +28,11 @@
 #include "graphics/Texture.h"
 #include "graphics/RenderList.h"
 #include "graphics/Renderable.h"
+#include "graphics/Material.h"
+#include "graphics/MaterialType.h"
+#include "graphics/VertexBuffer.h"
 #include "math/Frustum.h"
+#include "math/Math.h"
 #include "scene/World.h"
 #include "scene/RenderableContainer.h"
 #include "system/LowLevelSystem.h"
@@ -124,6 +128,8 @@ namespace hpl {
 		mbToggleKeyWasDown = false;
 		mlLastClaimedFrame = -1;
 		mfRadius = 50.0f;
+		mbDiag = false;
+		mfLastDiagLog = -1;
 
 		for(int i=0; i<eRemixStep_LastEnum; ++i) mvTimingSum[i] = 0;
 		mfTimingMaxFrame = 0;
@@ -172,6 +178,7 @@ namespace hpl {
 			bool bNormalMaps = EnvFlag("HPL_REMIX_NORMAL_MAPS");
 			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, bFlipV, bNormalMaps));
 			mbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
+			mbDiag = EnvFlag("HPL_REMIX_DIAG");
 
 			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.1f, flip V %d, normal maps %d)\n",
 				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, bFlipV, bNormalMaps);
@@ -336,6 +343,7 @@ namespace hpl {
 
 		////////////////////////////////
 		// The scene, for this frame
+		mpScene->BeginFrame();	// drops last frame's lights and dynamic meshes
 		mpScene->SetCamera(mpCurrentFrustum);
 
 		for(int i=0; i<mpCurrentRenderList->GetSolidObjectNum(); ++i)
@@ -343,7 +351,6 @@ namespace hpl {
 		for(int i=0; i<mpCurrentRenderList->GetTransObjectNum(); ++i)
 			mpScene->DrawObject(mpCurrentRenderList->GetTransObject(i), mpCurrentFrustum);
 
-		mpScene->BeginLights();
 		for(int i=0; i<mpCurrentRenderList->GetLightNum(); ++i)
 			mpScene->DrawLight(mpCurrentRenderList->GetLight(i));
 
@@ -372,6 +379,59 @@ namespace hpl {
 
 		vStepMs[eRemixStep_Draw] = NowMs() - fStepStart;
 		RecordTimings(vStepMs);
+
+		if(mbDiag && NowMs() - mfLastDiagLog > 2000.0)
+		{
+			mfLastDiagLog = NowMs();
+			LogObjectsNearCamera();
+		}
+	}
+
+	//-----------------------------------------------------------------------
+
+	// Diagnostic for things that follow the camera (the "veil", the hands):
+	// what each object near the camera is and where it sits in view space
+	// (x right, y up, -z forward)
+	void cRendererRemix::LogObjectsNearCamera()
+	{
+		static const char *vTypeNames[eRenderableType_LastEnum] = {
+			"particles", "submesh", "light", "billboard", "beam", "guiset", "rope", "fogarea", "dummy" };
+
+		cVector3f vCamPos = mpCurrentFrustum->GetOrigin();
+		const cMatrixf &mtxView = mpCurrentFrustum->GetViewMatrix();
+
+		Log("Remix diag: objects within 1.5 m of the camera at (%.2f %.2f %.2f):\n", vCamPos.x, vCamPos.y, vCamPos.z);
+		int lCount = 0;
+		for(int lList=0; lList<2; ++lList)
+		{
+			int lNum = lList==0 ? mpCurrentRenderList->GetSolidObjectNum() : mpCurrentRenderList->GetTransObjectNum();
+			for(int i=0; i<lNum; ++i)
+			{
+				iRenderable *pObject = lList==0 ? mpCurrentRenderList->GetSolidObject(i) : mpCurrentRenderList->GetTransObject(i);
+				cBoundingVolume *pBV = pObject->GetBoundingVolume();
+				if(SqrDistToBox(vCamPos, pBV->GetMin(), pBV->GetMax()) > 1.5f*1.5f) continue;
+
+				cMaterial *pMaterial = pObject->GetMaterial();
+				iMaterialType *pType = pMaterial ? pMaterial->GetType() : NULL;
+				iVertexBuffer *pVtx = pObject->GetVertexBuffer();
+				cVector3f vViewCenter = cMath::MatrixMul(mtxView, pBV->GetWorldCenter());
+				cVector3f vSize = pBV->GetSize();
+				int lTypeIdx = (int)pObject->GetRenderType();
+
+				Log("  %s %s '%s' material '%s' (type %s, blend %d, alpha %d), %d vtx, view center (%.2f %.2f %.2f), size (%.2f %.2f %.2f)\n",
+					lList==0 ? "solid" : "trans",
+					lTypeIdx >= 0 && lTypeIdx < eRenderableType_LastEnum ? vTypeNames[lTypeIdx] : "?",
+					pObject->GetName().c_str(),
+					pMaterial ? pMaterial->GetName().c_str() : "-",
+					pType ? pType->GetName().c_str() : "-",
+					pMaterial ? (int)pMaterial->GetBlendMode() : -1,
+					pMaterial ? (int)pMaterial->GetAlphaMode() : -1,
+					pVtx ? pVtx->GetVertexNum() : 0,
+					vViewCenter.x, vViewCenter.y, vViewCenter.z, vSize.x, vSize.y, vSize.z);
+				++lCount;
+			}
+		}
+		Log("  (%d objects)\n", lCount);
 	}
 
 	//-----------------------------------------------------------------------

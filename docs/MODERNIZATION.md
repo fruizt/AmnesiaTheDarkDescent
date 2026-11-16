@@ -332,6 +332,20 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
 - RTX mode works in the main menu's 3D background too.
 - Seen in play: the "veil" is still there, and **the player's hands don't show**
   in RTX mode.
+- **Veil and hands solved (same cause):** Remix kept the first shape of every
+  vertex buffer the engine rewrites. The veil was the area fog particles
+  (`ps_area_fog`, a ~9x10 m emitter around the player) frozen at the moment
+  RTX mode started. The hands (CPU-skinned) were frozen in their first pose.
+  Objects with a non-static vertex buffer (particles, skinned meshes,
+  billboards, beams, ropes) now get a new Remix mesh every frame, using only
+  the indices drawn and the vertex colors. This replaces "Remix's skinning" in
+  decision 0002's build step 3 for now. Remix skinning stays an option if
+  enemies prove expensive. `HPL_REMIX_DIAG=1` logs the objects near the camera.
+- Remix rejects **`.tga` and `.jpg` textures** ("Unsupported image file
+  format"), so particles render untextured (the area fog shows as solid sheets
+  on the floor).
+- **Lights are uncalibrated:** inverse-square falloff blows out what's close to
+  a light. The hand-held lantern makes the hands glow white.
 
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world

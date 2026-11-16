@@ -50,6 +50,7 @@ namespace hpl {
 	//   HPL_REMIX_LIGHT_SCALE  multiplier from Amnesia light color to Remix radiance (default 100)
 	//   HPL_REMIX_FLIP_V       1 = flip texture V coordinates (default 0)
 	//   HPL_REMIX_NORMAL_MAPS  1 = pass normal maps to Remix (default 0)
+	//   HPL_REMIX_DIAG         1 = every 2 seconds, log the objects within 1.5 m of the camera
 	// Every 5 seconds in RTX mode it logs frame timings ("Remix perf" in hpl.log).
 	class cRendererRemix : public iRenderer
 	{
@@ -81,6 +82,7 @@ namespace hpl {
 
 		void AddNodeObjectsInRadius(iRenderableContainerNode *apNode, const cVector3f &avCenter, tRenderableFlag alNeededFlags);
 		void RecordTimings(const double *apStepMs);
+		void LogObjectsNearCamera();
 
 		cRemixContext *mpContext;
 		cRemixScene *mpScene;
@@ -94,6 +96,8 @@ namespace hpl {
 		bool mbToggleKeyWasDown;
 		int mlLastClaimedFrame;
 		float mfRadius;
+		bool mbDiag;
+		double mfLastDiagLog;
 
 		// Timings, averaged over 5 seconds
 		double mvTimingSum[6];

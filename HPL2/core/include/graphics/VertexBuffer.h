@@ -109,6 +109,9 @@ namespace hpl {
 		int GetElementNum(){ return mlElementNum;}
 
 		tVertexElementFlag GetVertexElementFlags(){ return mVertexFlags;}
+		// Static: written once. Dynamic/Stream: rewritten while used (particles,
+		// skinned meshes, billboards, beams, ropes)
+		eVertexBufferUsageType GetUsageType(){ return mUsageType;}
 	
 	protected:
 		iLowLevelGraphics* mpLowLevelGraphics;
