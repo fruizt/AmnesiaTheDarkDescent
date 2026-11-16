@@ -271,6 +271,92 @@ Spike phases:
   level?), candle flames show when the candles are unlit (per-object
   illumination not passed), lights are dim (`HPL_REMIX_LIGHT_SCALE`), no normal
   maps, animation frozen, no particles/decals yet.
+- **2026-11-16 update:**
+  - Missing walls and wrong textures were a **stale cache**: the caches are keyed
+    by engine pointers, and a new world reuses the old world's addresses.
+    `cScene::DestroyWorld` now clears them.
+  - Light-ray billboards (`bb_*_lightray`, 2x10 m fake light shafts) are skipped.
+  - Remix now presents into the game window, and **F9** toggles classic/RTX.
+    RTX mode plays fine with `rtx.blockInputToGameInUI = False`, set in
+    `remix/rtx.conf`.
+  - **RTX → classic doesn't work:** once Remix's Vulkan swapchain owns the window,
+    OpenGL's `SwapBuffers` no longer reaches it, so the window keeps showing
+    Remix's last frame while the game runs on.
+  - Alt+X doesn't open Remix's menu, and Remix logs
+    `[D3D9WindowProc] Swapchain handle is invalid`.
+  - Still open: a see-through "veil" that keeps a fixed distance from the camera
+    (likely something attached to the player), missing particles, Remix
+    rejecting some particle textures ("Unsupported image file format").
+- **Verdict:** path tracing Amnesia through the API works without porting the
+  engine to Vulkan, since Remix's Vulkan stays inside Remix. The remaining doubts
+  are presentation (below), frame rate and skinned characters.
+
+## RTX mode design (2026-11-16)
+The real build, replacing the spike step by step. **OpenGL always owns the game
+window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world
+would be, then draws its post effects, menus and HUD on top as usual.
+
+### Presentation: Remix's frame as an OpenGL texture
+Researched in the dxvk-remix source (`rtx_remix_api.cpp`, `d3d9_swapchain.h`,
+`d3d9_common_texture.cpp`, `dxvk_image.cpp`):
+- `dxvk_GetExternalSwapchain` is **not usable** for us: it returns raw
+  `VkImage`/`VkSemaphore` handles of Remix's own Vulkan device, with no
+  exportable memory, so OpenGL can't read them.
+- **Usable route:** a D3D9 texture created on Remix's device with a shared handle
+  (`D3DPOOL_DEFAULT`, `D3DUSAGE_RENDERTARGET`, `pSharedHandle`) is backed by
+  Vulkan memory exported as `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT`.
+  OpenGL imports that with `GL_EXT_memory_object` + `GL_EXT_memory_object_win32`
+  (`glImportMemoryWin32HandleEXT(..., GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT, handle)`,
+  then `glTexStorageMem2DEXT`). Each frame, `dxvk_CopyRenderingOutput(surface,
+  FINAL_COLOR)` copies Remix's final image into that texture.
+- That needs Remix's `IDirect3DDevice9Ex`, which `remixapi_Startup` keeps
+  private. So we do what `Startup` does ourselves: `dxvk_CreateD3D9`, then
+  `CreateDeviceEx`, then `dxvk_RegisterD3D9Device`. Remix's own swapchain is
+  pointed at a **hidden window**, so it never touches the game window. (The
+  public `dxvk_CreateD3D9` only skips the Vulkan swapchain together with editor
+  mode, which changes other defaults; the hidden window avoids that.)
+
+### Frame flow in RTX mode
+In `cScene::Render`, for the main viewport:
+1. Build the scene for Remix (first the spike's render list, later
+   `cRendererRemix`), call Remix's `Present`, then `dxvk_CopyRenderingOutput`
+   into the shared texture.
+2. Instead of the OpenGL world render, draw the shared texture full-screen into
+   the frame buffer the world would have gone to.
+3. Post effects, 3D GUI and screen GUI (menus, HUD, notes, inventory) run
+   unchanged on top. Amnesia's sanity and bloom effects would apply to the RTX
+   image too.
+4. OpenGL's `SwapBuffers` presents as always.
+
+F9 picks between steps 1–2 and the normal OpenGL world render. Switching is
+instant, and the main menu and HUD work in both modes.
+
+### Open questions, in the order we'll answer them
+1. **Synchronization:** the copy's semaphores aren't shared with OpenGL.
+   Start with a conservative wait (Remix's `Present` before the copy, and a
+   finish on the copy), measure the cost, refine if needed.
+2. **The import itself:** whether NVIDIA's OpenGL accepts the KMT handle, and
+   whether the memory needs a dedicated allocation. Tested first, with a solid
+   color copied from Remix.
+3. **Resizing:** recreate the shared texture and Remix's device size when the
+   resolution changes.
+4. **Alt+X:** Remix hooks the window of its device; with a hidden window the
+   hook sits on that window. Key forwarding, or our own toggle through
+   `SetConfigVariable("rtx.showUI", ...)`.
+5. **Frame rate** at 1440p, and the cost of rendering the scene in both APIs
+   (kept until `cRendererRemix` builds its own list).
+
+Fallback if the import fails: read Remix's frame back to the CPU and upload it
+to OpenGL. That's slow, but enough to keep going.
+
+### Build order
+1. Shared texture + OpenGL import, proven with a solid color.
+2. Remix's frame shown in place of the world, with the HUD on top, and F9 working
+   in both directions.
+3. Measure the frame rate.
+4. `cRendererRemix`: Remix's own renderer class with its own scene traversal,
+   so RTX mode skips the OpenGL world render. Then the content work: material
+   conversion, particles, skinned characters, the veil.
 
 ## Known leads
 - Windows x64: each level load logs "Could not open binary file ...map_cache_n236"
