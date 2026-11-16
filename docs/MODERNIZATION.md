@@ -297,6 +297,27 @@ Build steps 1 and 2 are done (commit `579c275`): the import works on the RTX
 4070 Ti Super, and RTX mode shows in the game window with the HUD and post
 effects on top, F9 working both ways.
 
+**Step 3, frame rate (2026-11-16):** Rainy Hall, RTX 4070 Ti Super, the spike's
+"Remix perf" log lines (5-second averages, CPU wall clock). Both modes hold a
+steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
+
+| | 1600x900 | 2560x1440 fullscreen |
+|---|---|---|
+| Classic, GL world | ~1–2 ms | ~0.6–1.2 ms |
+| RTX, Remix (copy+wait) | ~6–7 ms | ~10–10.5 ms |
+| RTX, GL world + scene + present + draw | ~1–2.5 ms | ~1–1.5 ms |
+| RTX, uncapped | ~100 FPS | not measured |
+
+- Remix is most of the RTX cost, and grows ~1.5x for 2.6x the pixels (fixed
+  costs, maybe upscaling; Remix's upscaler setting wasn't checked).
+- The first frames after switching to RTX take ~200–250 ms once (Remix building
+  its acceleration structures and loading textures).
+- `LimitFPS="false"` makes the classic image glitch (parts look frozen at ~1000
+  FPS while the logic runs at 60 Hz). That's an engine trait, not Remix: keep the
+  cap on.
+- Not covered yet: bigger levels, many lights, particles, skinned characters,
+  and the real cost of the OpenGL world render on the GPU in RTX mode.
+
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world
 would be, then draws its post effects, menus and HUD on top as usual.

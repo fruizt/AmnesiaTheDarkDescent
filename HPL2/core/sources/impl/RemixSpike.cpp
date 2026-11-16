@@ -99,6 +99,30 @@ namespace hpl {
 	// Lights are recreated every frame (as the Remix docs say to do for changing lights)
 	static std::vector<remixapi_LightHandle> gvFrameLights;
 
+	// Frame timings (CPU wall clock, in ms), averaged and logged every 5 seconds.
+	// GPU work is asynchronous, so a GPU-bound step shows up where the CPU waits
+	// for it: in copy+wait for Remix, in the frame total for OpenGL.
+	enum ePerfStep
+	{
+		ePerfStep_Frame,		// start of one world render to the start of the next
+		ePerfStep_GlWorld,		// OpenGL world render (CPU side)
+		ePerfStep_RemixScene,	// camera, objects and lights handed to Remix
+		ePerfStep_RemixPresent,	// Remix's Present call
+		ePerfStep_CopyWait,		// copy into the shared texture, and waiting for it
+		ePerfStep_Draw,			// OpenGL drawing the shared texture
+		ePerfStep_LastEnum
+	};
+	static const char *gvPerfStepNames[ePerfStep_LastEnum] = { "frame", "GL world", "Remix scene", "Remix present", "copy+wait", "draw" };
+
+	static double gfTimerToMs = 0.0;
+	static double gvPerfSum[ePerfStep_LastEnum] = {};
+	static double gfPerfMaxFrame = 0.0;
+	static int glPerfFrames = 0;
+	static double gfPerfWindowStart = -1.0;
+	static double gfFrameStart = -1.0;
+	static double gfPendingFrameMs = -1.0;	// the previous frame's total, recorded with this frame's steps
+	static int glLastBeforeRenderFrame = -1;
+
 	//-----------------------------------------------------------------------
 
 	//////////////////////////////////////////////////////////////////////////
@@ -117,6 +141,56 @@ namespace hpl {
 	{
 		const char *sValue = getenv(asName);
 		return sValue && sValue[0] == '1';
+	}
+
+	//-----------------------------------------------------------------------
+
+	static double NowMs()
+	{
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		if(gfTimerToMs == 0.0)
+		{
+			LARGE_INTEGER freq;
+			QueryPerformanceFrequency(&freq);
+			gfTimerToMs = 1000.0 / (double)freq.QuadPart;
+		}
+		return (double)now.QuadPart * gfTimerToMs;
+	}
+
+	static void ResetPerf()
+	{
+		for(int i=0; i<ePerfStep_LastEnum; ++i) gvPerfSum[i] = 0.0;
+		gfPerfMaxFrame = 0.0;
+		glPerfFrames = 0;
+		gfPerfWindowStart = NowMs();
+	}
+
+	// One frame's step times. The frame total is the previous frame's (it's only
+	// known when the next one starts), close enough for 5-second averages.
+	static void RecordPerf(const double *apStepMs)
+	{
+		if(gfPendingFrameMs < 0.0) return;	// no complete frame yet
+		if(gfPerfWindowStart < 0.0) ResetPerf();
+
+		gvPerfSum[ePerfStep_Frame] += gfPendingFrameMs;
+		if(gfPendingFrameMs > gfPerfMaxFrame) gfPerfMaxFrame = gfPendingFrameMs;
+		for(int i=ePerfStep_Frame+1; i<ePerfStep_LastEnum; ++i) gvPerfSum[i] += apStepMs[i];
+		++glPerfFrames;
+
+		if(NowMs() - gfPerfWindowStart < 5000.0) return;
+
+		// "Remix perf [RTX]: 143.2 fps | frame 6.98 avg, 12.40 max | GL world 2.10 | ..."
+		char sLine[512];
+		double fFrameAvg = gvPerfSum[ePerfStep_Frame] / glPerfFrames;
+		int lLen = sprintf_s(sLine, "Remix perf [%s]: %.1f fps | frame %.2f avg, %.2f max",
+							gbRtxActive ? "RTX" : "classic", 1000.0 / fFrameAvg, fFrameAvg, gfPerfMaxFrame);
+		int lLastStep = gbRtxActive ? ePerfStep_LastEnum : ePerfStep_GlWorld + 1;
+		for(int i=ePerfStep_GlWorld; i<lLastStep && lLen > 0; ++i)
+			lLen += sprintf_s(sLine + lLen, sizeof(sLine) - lLen, " | %s %.2f", gvPerfStepNames[i], gvPerfSum[i] / glPerfFrames);
+		Log("%s (ms, %d frames)\n", sLine, glPerfFrames);
+
+		ResetPerf();
 	}
 
 	//-----------------------------------------------------------------------
@@ -717,16 +791,26 @@ namespace hpl {
 		if(lFrame == glLastFrame) return;
 		glLastFrame = lFrame;
 
+		double vStepMs[ePerfStep_LastEnum] = {};
+		double fStepStart = NowMs();
+		vStepMs[ePerfStep_GlWorld] = gfFrameStart >= 0.0 ? fStepStart - gfFrameStart : 0.0;
+
 		// F9 toggles classic / RTX (only while the game window has focus)
 		bool bToggleKeyDown = GetForegroundWindow() == ghGameWindow && (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
 		if(bToggleKeyDown && gbToggleKeyWasDown==false)
 		{
 			gbRtxActive = !gbRtxActive;
 			Log("Remix: switched to %s mode\n", gbRtxActive ? "RTX" : "classic");
+			ResetPerf();	// don't mix the two modes in one average
+			gfPendingFrameMs = -1.0;
 		}
 		gbToggleKeyWasDown = bToggleKeyDown;
 
-		if(gbRtxActive==false) return;	// classic: OpenGL presents, Remix stays idle
+		if(gbRtxActive==false)	// classic: OpenGL as usual, Remix stays idle
+		{
+			RecordPerf(vStepMs);
+			return;
+		}
 
 		cRenderList *pRenderList = apRenderer->GetCurrentRenderList();
 		if(pRenderList==NULL) return;
@@ -779,9 +863,17 @@ namespace hpl {
 			glLoggedStaleMaterialHits = glStaleMaterialHits;
 		}
 
+		double fNow = NowMs();
+		vStepMs[ePerfStep_RemixScene] = fNow - fStepStart;
+		fStepStart = fNow;
+
 		remixapi_PresentInfo presentInfo = {};
 		presentInfo.sType = REMIXAPI_STRUCT_TYPE_PRESENT_INFO;
 		gRemix.Present(&presentInfo);	// renders, and presents to the hidden window
+
+		fNow = NowMs();
+		vStepMs[ePerfStep_RemixPresent] = fNow - fStepStart;
+		fStepStart = fNow;
 
 		////////////////////////////////
 		// Copy Remix's final image into the shared texture, wait until the copy
@@ -793,7 +885,31 @@ namespace hpl {
 			gpCopyDoneQuery->Issue(D3DISSUE_END);
 			while(gpCopyDoneQuery->GetData(NULL, 0, D3DGETDATA_FLUSH) == S_FALSE) Sleep(0);
 		}
+
+		fNow = NowMs();
+		vStepMs[ePerfStep_CopyWait] = fNow - fStepStart;
+		fStepStart = fNow;
+
 		DrawSharedTexture();
+
+		vStepMs[ePerfStep_Draw] = NowMs() - fStepStart;
+		RecordPerf(vStepMs);
+	}
+
+	//-----------------------------------------------------------------------
+
+	void cRemixSpike::OnBeforeWorldRender()
+	{
+		if(gbRunning==false) return;
+
+		// Once per frame: the first viewport rendered is the game's main one
+		int lFrame = iRenderer::GetRenderFrameCount();
+		if(lFrame == glLastBeforeRenderFrame) return;
+		glLastBeforeRenderFrame = lFrame;
+
+		double fNow = NowMs();
+		if(gfFrameStart >= 0.0) gfPendingFrameMs = fNow - gfFrameStart;
+		gfFrameStart = fNow;
 	}
 
 	//-----------------------------------------------------------------------

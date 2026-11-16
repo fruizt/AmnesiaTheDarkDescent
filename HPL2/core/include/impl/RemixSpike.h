@@ -41,9 +41,16 @@ namespace hpl {
 	//   HPL_REMIX_LIGHT_SCALE  multiplier from Amnesia light color to Remix radiance (default 100)
 	//   HPL_REMIX_FLIP_V       1 = flip texture V coordinates (default 0)
 	//   HPL_REMIX_NORMAL_MAPS  1 = pass normal maps to Remix (default 0)
+	//
+	// Every 5 seconds it logs frame timings for the current mode ("Remix perf"
+	// lines in hpl.log). For real numbers, set LimitFPS="false" in
+	// main_settings.cfg, or the frame rate is capped at the 60 Hz game logic.
 	class cRemixSpike
 	{
 	public:
+		// Just before the world is rendered: starts the frame's timings
+		static void OnBeforeWorldRender();
+
 		static void OnWorldRendered(iRenderer *apRenderer, cCamera *apCamera);
 
 		// Called before the engine destroys a world: everything cached from it

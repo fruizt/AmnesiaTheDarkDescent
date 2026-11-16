@@ -217,6 +217,9 @@ namespace hpl {
 				if(pRenderer && pViewPort->GetWorld() && pFrustum)
 				{
 					START_TIMING(RenderWorld)
+#ifdef HPL_REMIX
+					cRemixSpike::OnBeforeWorldRender();
+#endif
 					pRenderer->Render(	afFrameTime,pFrustum,
 										pViewPort->GetWorld(),pViewPort->GetRenderSettings(), 
 										pViewPort->GetRenderTarget(),
