@@ -433,13 +433,16 @@ namespace hpl {
 		std::map<uint64_t, remixapi_MaterialHandle>::iterator it = m_mapMaterials.find(lMaterialHash);
 		if(it != m_mapMaterials.end()) return it->second;
 
-		// Amnesia's texture files, passed by path (converted to .dds first when
-		// Remix can't load the format)
-		tWString sAlbedo, sNormal, sEmissive;
+		// Amnesia's texture files, passed by path. Converted first when Remix
+		// can't load the format, and always for the normal map (to Remix's
+		// octahedral encoding) and the specular map (to roughness).
+		tWString sAlbedo, sNormal, sEmissive, sRoughness;
 		iTexture *pTexture = apMaterial->GetTexture(eMaterialTexture_Diffuse);
 		sAlbedo = mTextureCache.GetPath(pTexture);
 		pTexture = apMaterial->GetTexture(eMaterialTexture_NMap);
-		if(mbNormalMaps) sNormal = mTextureCache.GetPath(pTexture);
+		if(mbNormalMaps) sNormal = mTextureCache.GetPath(pTexture, eRemixTexture_Normal);
+		pTexture = apMaterial->GetTexture(eMaterialTexture_Specular);
+		sRoughness = mTextureCache.GetPath(pTexture, eRemixTexture_Roughness);
 		pTexture = apMaterial->GetTexture(eMaterialTexture_Illumination);
 		sEmissive = mTextureCache.GetPath(pTexture);
 
@@ -448,7 +451,10 @@ namespace hpl {
 		opaqueInfo.sType = REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_OPAQUE_EXT;
 		opaqueInfo.albedoConstant = { 0.8f, 0.8f, 0.8f };
 		opaqueInfo.opacityConstant = 1.0f;
-		opaqueInfo.roughnessConstant = 0.7f;
+		// Without a specular map classic mode shows no highlight at all: fully
+		// rough. (A middle value everywhere was much of the "plastic" look.)
+		opaqueInfo.roughnessTexture = sRoughness.empty() ? NULL : sRoughness.c_str();
+		opaqueInfo.roughnessConstant = 1.0f;
 		opaqueInfo.metallicConstant = 0.0f;
 		opaqueInfo.thinFilmThickness_value = 200.0f;
 		opaqueInfo.useDrawCallAlphaState = false;

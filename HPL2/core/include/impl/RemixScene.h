@@ -62,6 +62,9 @@ namespace hpl {
 		// normal maps. abLogHashes logs each hash once, with what it's made from.
 		cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps, bool abLogHashes);
 
+		// Flips the green channel of converted normal maps
+		void SetFlipNormalY(bool abX){ mTextureCache.SetFlipNormalY(abX); }
+
 		void SetCamera(cFrustum *apFrustum);
 		// Destroys the previous frame's lights and dynamic meshes; call first.
 		// The world's name goes into the hashes of lights and dynamic meshes.

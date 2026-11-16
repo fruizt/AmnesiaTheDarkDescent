@@ -27,7 +27,9 @@
 #include "impl/SDLTexture.h"
 #include "system/LowLevelSystem.h"
 #include "system/String.h"
+#include "math/Math.h"
 
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -84,6 +86,7 @@ namespace hpl {
 	cRemixTextureCache::cRemixTextureCache()
 	{
 		mlWritten = 0;
+		mbFlipNormalY = false;
 
 		// Next to the exe: ours, never the game's folder
 		wchar_t sPath[MAX_PATH];
@@ -102,7 +105,7 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	tWString cRemixTextureCache::GetPath(iTexture *apTexture)
+	tWString cRemixTextureCache::GetPath(iTexture *apTexture, eRemixTexture aKind)
 	{
 		if(apTexture==NULL) return tWString();
 
@@ -110,23 +113,26 @@ namespace hpl {
 		if(sSource.empty()) return tWString();
 
 		tWString sExt = cString::ToLowerCaseW(cString::GetFileExtW(sSource));
-		if(sExt == L"dds") return sSource;	// Remix loads those itself
+		if(aKind == eRemixTexture_Color && sExt == L"dds") return sSource;	// Remix loads those itself
 
-		std::map<tWString, tWString>::iterator it = m_mapConverted.find(sSource);
-		if(it != m_mapConverted.end()) return it->second;
+		std::map<tWString, tWString> &mapConverted = m_mapConverted[aKind];
+		std::map<tWString, tWString>::iterator it = mapConverted.find(sSource);
+		if(it != mapConverted.end()) return it->second;
 
-		// "ps_area_fog_1a2b3c4d.dds"
+		// "ps_area_fog_1a2b3c4d.dds", "castlebase_wall_nrm_1a2b3c4d_normal.dds"
+		static const wchar_t *vKindSuffix[eRemixTexture_LastEnum] = { L"", L"_normal", L"_roughness" };
 		tWString sName = cString::GetFileNameW(sSource);
 		size_t lDot = sName.find_last_of(L'.');
 		if(lDot != tWString::npos) sName = sName.substr(0, lDot);
-		wchar_t sSuffix[16];
-		swprintf_s(sSuffix, L"_%08x.dds", HashPath(sSource));
+		wchar_t sSuffix[48];
+		swprintf_s(sSuffix, L"_%08x%ls%ls.dds", HashPath(sSource), vKindSuffix[aKind],
+					aKind == eRemixTexture_Normal && mbFlipNormalY ? L"_flipy" : L"");
 		tWString sDest = msCacheDir + sName + sSuffix;
 
 		unsigned long long lDestTime = FileWriteTime(sDest);
 		if(lDestTime == 0 || lDestTime < FileWriteTime(sSource))
 		{
-			if(WriteDds(apTexture, sDest))
+			if(WriteDds(apTexture, sDest, aKind))
 			{
 				++mlWritten;
 				Log("Remix: converted texture '%ls' to '%ls'\n", sSource.c_str(), sDest.c_str());
@@ -138,7 +144,7 @@ namespace hpl {
 			}
 		}
 
-		m_mapConverted[sSource] = sDest;
+		mapConverted[sSource] = sDest;
 		return sDest;
 	}
 
@@ -150,7 +156,54 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	bool cRemixTextureCache::WriteDds(iTexture *apTexture, const tWString &asDestPath)
+	// Pixels are BGRA bytes
+	void cRemixTextureCache::ConvertPixels(unsigned char *apBgra, size_t alPixels, eRemixTexture aKind)
+	{
+		if(aKind == eRemixTexture_Color) return;
+
+		for(size_t i=0; i<alPixels; ++i)
+		{
+			unsigned char *pPixel = &apBgra[i*4];
+			float fR = pPixel[2] / 255.0f, fG = pPixel[1] / 255.0f, fB = pPixel[0] / 255.0f;
+
+			if(aKind == eRemixTexture_Normal)
+			{
+				// Classic mode: normalize(rgb - 0.5) in tangent space (z out of
+				// the surface). Remix: unsigned octahedral, its exact encoder
+				// (hemisphereDirectionToUnsignedOctahedral, packing.slangh).
+				float fX = fR - 0.5f, fY = fG - 0.5f, fZ = fB - 0.5f;
+				if(mbFlipNormalY) fY = -fY;
+				if(fZ < 0.0f) fZ = 0.0f;	// a hemisphere: nothing points into the surface
+				float fSum = fabsf(fX) + fabsf(fY) + fZ;
+				float fPx = 0.0f, fPy = 0.0f;
+				if(fSum > 1e-6f) { fPx = fX / fSum; fPy = fY / fSum; }
+				float fU = (fPx + fPy) * 0.5f + 0.5f;
+				float fV = (fPx - fPy) * 0.5f + 0.5f;
+				pPixel[2] = (unsigned char)(cMath::Clamp(fU, 0.0f, 1.0f) * 255.0f + 0.5f);
+				pPixel[1] = (unsigned char)(cMath::Clamp(fV, 0.0f, 1.0f) * 255.0f + 0.5f);
+				pPixel[0] = 0;
+				pPixel[3] = 255;
+			}
+			else if(aKind == eRemixTexture_Roughness)
+			{
+				// Classic mode: highlight intensity R, Blinn-Phong power
+				// n = 2^(G*10) + 1 (deferred_light_frag.glsl). Power to perceptual
+				// roughness with the usual (2 / (n + 2))^(1/4). A weak highlight
+				// means a surface that barely reflects: toward fully rough.
+				float fPower = powf(2.0f, fG * 10.0f) + 1.0f;
+				float fRoughness = powf(2.0f / (fPower + 2.0f), 0.25f);
+				float fStrength = cMath::Clamp(sqrtf(fR), 0.0f, 1.0f);
+				fRoughness = 1.0f + (fRoughness - 1.0f) * fStrength;
+				unsigned char lRoughness = (unsigned char)(cMath::Clamp(fRoughness, 0.0f, 1.0f) * 255.0f + 0.5f);
+				pPixel[2] = pPixel[1] = pPixel[0] = lRoughness;
+				pPixel[3] = 255;
+			}
+		}
+	}
+
+	//-----------------------------------------------------------------------
+
+	bool cRemixTextureCache::WriteDds(iTexture *apTexture, const tWString &asDestPath, eRemixTexture aKind)
 	{
 		if(apTexture->GetType() != eTextureType_2D) return false;
 
@@ -185,6 +238,11 @@ namespace hpl {
 		glBindTexture(GL_TEXTURE_2D, (GLuint)lPrevTexture);
 		while(glGetError() != GL_NO_ERROR) {}
 		if(vLevels.empty()) return false;
+
+		// Each mip level converted on its own (the engine's mips are already
+		// filtered; converting them keeps them consistent)
+		for(size_t i=0; i<vLevels.size(); ++i)
+			ConvertPixels(&vLevels[i][0], vLevels[i].size() / 4, aKind);
 
 		////////////////////////////////
 		// Header: DDSD_CAPS|HEIGHT|WIDTH|PITCH|PIXELFORMAT|MIPMAPCOUNT,

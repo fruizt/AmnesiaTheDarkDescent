@@ -184,13 +184,16 @@ namespace hpl {
 			float fLightScale = EnvFloat("HPL_REMIX_LIGHT_SCALE", 1.0f);
 			float fHeldLightRadius = EnvFloat("HPL_REMIX_HELD_LIGHT_RADIUS", 0.5f);
 			bool bFlipV = EnvFlag("HPL_REMIX_FLIP_V");
-			bool bNormalMaps = EnvFlag("HPL_REMIX_NORMAL_MAPS");
+			const char *sNormalMaps = getenv("HPL_REMIX_NORMAL_MAPS");
+			bool bNormalMaps = sNormalMaps==NULL || sNormalMaps[0] != '0';	// on unless "0"
+			bool bFlipNormalY = EnvFlag("HPL_REMIX_NORMAL_FLIP_Y");
 			mbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
 			mbDiag = EnvFlag("HPL_REMIX_DIAG");
 			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, fHeldLightRadius, bFlipV, bNormalMaps, mbDiag));
+			mpScene->SetFlipNormalY(bFlipNormalY);
 
-			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.2f, held light radius %.2f m, flip V %d, normal maps %d)\n",
-				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, fHeldLightRadius, bFlipV, bNormalMaps);
+			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.2f, held light radius %.2f m, flip V %d, normal maps %d, flip normal Y %d)\n",
+				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, fHeldLightRadius, bFlipV, bNormalMaps, bFlipNormalY);
 		}
 
 		////////////////////////////////////

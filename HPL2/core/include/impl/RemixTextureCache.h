@@ -32,27 +32,52 @@ namespace hpl {
 
 	//-----------------------------------------
 
-	// Remix loads textures from files, and only some formats: it rejects
-	// Amnesia's .tga and .jpg ("Unsupported image file format"), which most
-	// particles use. For those, the texture the engine already loaded into
-	// OpenGL is read back (with its mipmaps) and written as an uncompressed
-	// .dds into remix_texture_cache\ next to the exe; Remix gets that path. The
-	// files are reused on later runs unless the source file is newer.
+	// What a texture is used as in Remix, which decides whether and how it's
+	// converted
+	enum eRemixTexture
+	{
+		// As is. Converted only when Remix can't load the format (.tga, .jpg)
+		eRemixTexture_Color,
+		// From Amnesia's tangent-space normal map (RGB, read as normalize(rgb - 0.5)
+		// like classic mode) to Remix's unsigned octahedral encoding (RG)
+		eRemixTexture_Normal,
+		// From Amnesia's specular map (R = intensity, G = power) to Remix's
+		// perceptual roughness (R)
+		eRemixTexture_Roughness,
+
+		eRemixTexture_LastEnum
+	};
+
+	//-----------------------------------------
+
+	// Remix loads textures from files. The texture the engine already loaded
+	// into OpenGL is read back (with its mipmaps), converted when needed, and
+	// written as an uncompressed .dds into remix_texture_cache\ next to the exe;
+	// Remix gets that path. Needed for formats Remix rejects (Amnesia's .tga and
+	// .jpg, "Unsupported image file format"), and for maps whose encoding
+	// differs (normal, specular). Files are reused on later runs unless the
+	// source file is newer.
 	class cRemixTextureCache
 	{
 	public:
 		cRemixTextureCache();
 
-		// The path to give Remix for this texture: its own file if Remix can
-		// load it, else the cached .dds. Empty if there's nothing usable.
-		// Needs the OpenGL context current.
-		tWString GetPath(iTexture *apTexture);
+		// abFlipNormalY flips the normal maps' green channel (if bumps look lit
+		// from the wrong side)
+		void SetFlipNormalY(bool abX){ mbFlipNormalY = abX; }
+
+		// The path to give Remix for this texture used as aKind: its own file if
+		// Remix can load it as is, else the cached .dds. Empty if there's nothing
+		// usable. Needs the OpenGL context current.
+		tWString GetPath(iTexture *apTexture, eRemixTexture aKind = eRemixTexture_Color);
 
 	private:
-		bool WriteDds(iTexture *apTexture, const tWString &asDestPath);
+		bool WriteDds(iTexture *apTexture, const tWString &asDestPath, eRemixTexture aKind);
+		void ConvertPixels(unsigned char *apBgra, size_t alPixels, eRemixTexture aKind);
 
 		tWString msCacheDir;
-		std::map<tWString, tWString> m_mapConverted;	// source path -> cached path (or empty if it failed)
+		bool mbFlipNormalY;
+		std::map<tWString, tWString> m_mapConverted[eRemixTexture_LastEnum];	// source path -> cached path (or empty if it failed)
 		int mlWritten;
 	};
 

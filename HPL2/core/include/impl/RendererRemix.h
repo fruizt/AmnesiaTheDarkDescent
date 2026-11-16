@@ -53,7 +53,8 @@ namespace hpl {
 	//   HPL_REMIX_LIGHT_SCALE  light brightness; 1 = as bright as classic mode at half a light's radius (default 1)
 	//   HPL_REMIX_HELD_LIGHT_RADIUS  emitter radius in meters of lights within 1 m of the camera, like the lantern (default 0.5)
 	//   HPL_REMIX_FLIP_V       1 = flip texture V coordinates (default 0)
-	//   HPL_REMIX_NORMAL_MAPS  1 = pass normal maps to Remix (default 0)
+	//   HPL_REMIX_NORMAL_MAPS  0 = don't pass normal maps to Remix (default: on, converted to its encoding)
+	//   HPL_REMIX_NORMAL_FLIP_Y  1 = flip the normal maps' green channel (if bumps look lit from the wrong side)
 	//   HPL_REMIX_DIAG         1 = every 2 seconds, log the objects within 1.5 m of the camera
 	// Every 5 seconds in RTX mode it logs frame timings ("Remix perf" in hpl.log).
 	class cRendererRemix : public iRenderer
