@@ -28,12 +28,15 @@ namespace hpl {
 	//-----------------------------------------
 
 	// Phase 1 of the RTX Remix spike (see docs/MODERNIZATION.md).
-	// After the OpenGL renderer draws the world, mirror what it drew (visible solid
-	// objects, their materials, the lights and the camera) into RTX Remix, shown
-	// path-traced in a second window. Only active when the environment variable
-	// HPL_REMIX=1 is set and the build has HPL_REMIX (64-bit Windows).
+	// After the OpenGL renderer draws the world, mirror what it drew (visible
+	// objects, their materials, the lights and the camera) into RTX Remix, which
+	// presents path-traced frames into the game window. F9 toggles between classic
+	// (OpenGL) and RTX (Remix) mode; Alt+X opens Remix's menu in RTX mode. The
+	// game's own menus/HUD (OpenGL) don't show in RTX mode yet. Only active when the
+	// environment variable HPL_REMIX=1 is set and the build has HPL_REMIX (64-bit Windows).
 	//
-	// Tuning (environment variables):
+	// Options (environment variables):
+	//   HPL_REMIX_START_RTX    1 = start in RTX mode (default: classic)
 	//   HPL_REMIX_LIGHT_SCALE  multiplier from Amnesia light color to Remix radiance (default 100)
 	//   HPL_REMIX_FLIP_V       1 = flip texture V coordinates (default 0)
 	//   HPL_REMIX_NORMAL_MAPS  1 = pass normal maps to Remix (default 0)
@@ -41,6 +44,14 @@ namespace hpl {
 	{
 	public:
 		static void OnWorldRendered(iRenderer *apRenderer, cCamera *apCamera);
+
+		// Called before the engine destroys a world: everything cached from it
+		// (keyed by engine pointers, which a new world may reuse) becomes invalid
+		static void OnWorldDestroyed();
+
+		// True in RTX mode: Remix presents the frame, so the engine must skip
+		// OpenGL's SwapBuffers (both present to the same window)
+		static bool IsRtxActive();
 	};
 
 	//-----------------------------------------

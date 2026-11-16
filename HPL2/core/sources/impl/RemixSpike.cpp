@@ -53,11 +53,16 @@ namespace hpl {
 
 	static remixapi_Interface gRemix = {};
 	static HMODULE ghRemixDll = NULL;
-	static HWND ghRemixWindow = NULL;
+	static HWND ghGameWindow = NULL;	// the engine's SDL window, which Remix presents to
 
 	static bool gbStartupTried = false;
 	static bool gbRunning = false;
 	static int glLastFrame = -1;
+
+	// RTX mode: Remix renders and presents the frame (the engine skips OpenGL's
+	// SwapBuffers). Classic mode: OpenGL as usual, Remix idle. Toggled with F9.
+	static bool gbRtxActive = false;
+	static bool gbToggleKeyWasDown = false;
 
 	static float gfLightScale = 100.0f;
 	static bool gbFlipV = false;
@@ -67,6 +72,16 @@ namespace hpl {
 	typedef std::pair<iVertexBuffer*, cMaterial*> tMeshKey;
 	static std::map<cMaterial*, remixapi_MaterialHandle> gmapMaterials;
 	static std::map<tMeshKey, remixapi_MeshHandle> gmapMeshes;
+
+	// The caches are keyed by engine pointers, which a new world can reuse once the
+	// old one is destroyed (that gave Rainy Hall objects the menu's materials).
+	// Caches are cleared when a world is destroyed (OnWorldDestroyed). As a safety
+	// net, each entry also remembers what it was made from; a hit that doesn't
+	// match is rebuilt instead of reused, and counted.
+	static std::map<tMeshKey, std::pair<int,int> > gmapMeshCounts;	// vertices, indices
+	static std::map<cMaterial*, tWString> gmapMaterialAlbedo;
+	static int glStaleMeshHits = 0, glStaleMaterialHits = 0;
+	static int glLoggedStaleMeshHits = -1, glLoggedStaleMaterialHits = -1;
 	// Lights are recreated every frame (as the Remix docs say to do for changing lights)
 	static std::vector<remixapi_LightHandle> gvFrameLights;
 
@@ -92,19 +107,16 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	static LRESULT CALLBACK RemixWindowProc(HWND ahWnd, UINT alMsg, WPARAM alWParam, LPARAM alLParam)
+	static BOOL CALLBACK FindGameWindowProc(HWND ahWnd, LPARAM)
 	{
-		// Closing would destroy the window Remix presents to; minimize instead
-		if(alMsg == WM_CLOSE)
+		wchar_t sClass[32] = {};
+		GetClassNameW(ahWnd, sClass, 32);
+		if(wcscmp(sClass, L"SDL_app") == 0 && IsWindowVisible(ahWnd))
 		{
-			ShowWindow(ahWnd, SW_MINIMIZE);
-			return 0;
+			ghGameWindow = ahWnd;
+			return FALSE;
 		}
-		// The window only mirrors the game: clicking it must not take keyboard
-		// focus away from the game window (Amnesia stops reading input then)
-		if(alMsg == WM_MOUSEACTIVATE)
-			return MA_NOACTIVATE;
-		return DefWindowProcW(ahWnd, alMsg, alWParam, alLParam);
+		return TRUE;
 	}
 
 	//-----------------------------------------------------------------------
@@ -119,23 +131,15 @@ namespace hpl {
 		gbNormalMaps = EnvFlag("HPL_REMIX_NORMAL_MAPS");
 
 		////////////////////////////////
-		// Second window for Remix to present to.
-		// SDL's event loop pumps all of this thread's messages, so it stays responsive.
-		WNDCLASSW windowClass = {};
-		windowClass.lpfnWndProc = RemixWindowProc;
-		windowClass.hInstance = GetModuleHandleW(NULL);
-		windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
-		windowClass.lpszClassName = L"HplRemixSpike";
-		RegisterClassW(&windowClass);
-
-		RECT clientRect = { 0, 0, 1280, 720 };
-		AdjustWindowRect(&clientRect, WS_OVERLAPPEDWINDOW, FALSE);
-		// WS_EX_NOACTIVATE: never takes keyboard focus. WS_EX_APPWINDOW: still on the taskbar.
-		ghRemixWindow = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_APPWINDOW, L"HplRemixSpike", L"Amnesia - RTX Remix (spike)",
-									  WS_OVERLAPPEDWINDOW,
-									  40, 40, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top,
-									  NULL, NULL, windowClass.hInstance, NULL);
-		ShowWindow(ghRemixWindow, SW_SHOWNOACTIVATE);
+		// Remix presents into the game's own window (the engine's SDL window,
+		// created on this thread). OpenGL and Remix take turns: see IsRtxActive.
+		EnumThreadWindows(GetCurrentThreadId(), FindGameWindowProc, 0);
+		if(ghGameWindow==NULL)
+		{
+			Error("Remix: could not find the game window\n");
+			return false;
+		}
+		gbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
 
 		////////////////////////////////
 		// Load Remix from the exe's folder (it finds its dependencies there)
@@ -153,7 +157,7 @@ namespace hpl {
 
 		remixapi_StartupInfo startupInfo = {};
 		startupInfo.sType = REMIXAPI_STRUCT_TYPE_STARTUP_INFO;
-		startupInfo.hwnd = ghRemixWindow;
+		startupInfo.hwnd = ghGameWindow;
 		lResult = gRemix.Startup(&startupInfo);
 		if(lResult != REMIXAPI_ERROR_CODE_SUCCESS)
 		{
@@ -161,14 +165,57 @@ namespace hpl {
 			return false;
 		}
 
-		// Remix's own UI (first-use guide, Alt+X menu) blocks all input to the
-		// process while open, which froze the game's controls. Start with it
-		// closed, and never block the game: the Remix window only mirrors it.
+		// Start with Remix's UI closed (no first-use guide). Alt+X opens its menu;
+		// while it's open, Remix keeps input from the game (its default), so the
+		// camera doesn't move while you tweak settings.
 		gRemix.SetConfigVariable("rtx.showUI", "0");
-		gRemix.SetConfigVariable("rtx.blockInputToGameInUI", "False");
 
-		Log("Remix: started (light scale %.1f, flip V %d, normal maps %d)\n", gfLightScale, gbFlipV, gbNormalMaps);
+		Log("Remix: started in the game window, %s mode, F9 toggles (light scale %.1f, flip V %d, normal maps %d)\n",
+			gbRtxActive ? "RTX" : "classic", gfLightScale, gbFlipV, gbNormalMaps);
 		return true;
+	}
+
+	//-----------------------------------------------------------------------
+
+	// Drop a material's Remix resources, and every cached mesh that uses it
+	static void InvalidateMaterial(cMaterial *apMaterial)
+	{
+		std::map<tMeshKey, remixapi_MeshHandle>::iterator meshIt = gmapMeshes.begin();
+		while(meshIt != gmapMeshes.end())
+		{
+			if(meshIt->first.second == apMaterial)
+			{
+				if(meshIt->second) gRemix.DestroyMesh(meshIt->second);
+				gmapMeshCounts.erase(meshIt->first);
+				meshIt = gmapMeshes.erase(meshIt);
+			}
+			else ++meshIt;
+		}
+
+		std::map<cMaterial*, remixapi_MaterialHandle>::iterator matIt = gmapMaterials.find(apMaterial);
+		if(matIt != gmapMaterials.end())
+		{
+			if(matIt->second) gRemix.DestroyMaterial(matIt->second);
+			gmapMaterials.erase(matIt);
+		}
+		gmapMaterialAlbedo.erase(apMaterial);
+	}
+
+	//-----------------------------------------------------------------------
+
+	// Drop everything (meshes first, they reference materials)
+	static void ClearCaches()
+	{
+		for(std::map<tMeshKey, remixapi_MeshHandle>::iterator it = gmapMeshes.begin(); it != gmapMeshes.end(); ++it)
+			if(it->second) gRemix.DestroyMesh(it->second);
+		for(std::map<cMaterial*, remixapi_MaterialHandle>::iterator it = gmapMaterials.begin(); it != gmapMaterials.end(); ++it)
+			if(it->second) gRemix.DestroyMaterial(it->second);
+
+		Log("Remix: world destroyed, dropped %d cached meshes and %d materials\n", (int)gmapMeshes.size(), (int)gmapMaterials.size());
+		gmapMeshes.clear();
+		gmapMeshCounts.clear();
+		gmapMaterials.clear();
+		gmapMaterialAlbedo.clear();
 	}
 
 	//-----------------------------------------------------------------------
@@ -178,7 +225,16 @@ namespace hpl {
 		if(apMaterial==NULL) return NULL;
 
 		std::map<cMaterial*, remixapi_MaterialHandle>::iterator it = gmapMaterials.find(apMaterial);
-		if(it != gmapMaterials.end()) return it->second;
+		if(it != gmapMaterials.end())
+		{
+			// Safety net: reuse only if the entry was made from this material
+			iTexture *pDiffuse = apMaterial->GetTexture(eMaterialTexture_Diffuse);
+			tWString sNow = pDiffuse ? pDiffuse->GetFullPath() : tWString();
+			if(sNow == gmapMaterialAlbedo[apMaterial]) return it->second;
+
+			++glStaleMaterialHits;
+			InvalidateMaterial(apMaterial);	// then rebuild below
+		}
 
 		// Amnesia's texture files, passed by path
 		tWString sAlbedo, sNormal, sEmissive;
@@ -261,6 +317,7 @@ namespace hpl {
 			Warning("Remix: CreateMaterial failed for '%s' (error %d)\n", apMaterial->GetName().c_str(), lResult);
 
 		gmapMaterials[apMaterial] = hMaterial;
+		gmapMaterialAlbedo[apMaterial] = sAlbedo;
 		return hMaterial;
 	}
 
@@ -268,12 +325,27 @@ namespace hpl {
 
 	static remixapi_MeshHandle GetRemixMesh(iVertexBuffer *apVtxBuffer, cMaterial *apMaterial)
 	{
+		// Material first: if its cache entry was stale, this also drops the meshes
+		// that used it, so the lookup below can't return one of those
+		remixapi_MaterialHandle hMaterial = GetRemixMaterial(apMaterial);
+
 		tMeshKey key(apVtxBuffer, apMaterial);
 		std::map<tMeshKey, remixapi_MeshHandle>::iterator it = gmapMeshes.find(key);
-		if(it != gmapMeshes.end()) return it->second;
+		if(it != gmapMeshes.end())
+		{
+			// Safety net: reuse only if the entry was made from a buffer of this size
+			const std::pair<int,int> &cached = gmapMeshCounts[key];
+			if(cached.first == apVtxBuffer->GetVertexNum() && cached.second == apVtxBuffer->GetIndexNum())
+				return it->second;
+
+			++glStaleMeshHits;
+			if(it->second) gRemix.DestroyMesh(it->second);	// then rebuild below
+			gmapMeshes.erase(it);
+		}
 
 		remixapi_MeshHandle hMesh = NULL;
 		gmapMeshes[key] = NULL;	// also remembers failures, so they're tried once
+		gmapMeshCounts[key] = std::pair<int,int>(apVtxBuffer->GetVertexNum(), apVtxBuffer->GetIndexNum());
 
 		// The vertex buffer's CPU-side copy of its data
 		float *pPos = apVtxBuffer->GetFloatArray(eVertexBufferElement_Position);
@@ -307,7 +379,7 @@ namespace hpl {
 		surface.vertices_count = (uint64_t)lVtxNum;
 		surface.indices_values = (const uint32_t*)apVtxBuffer->GetIndices();
 		surface.indices_count = (uint64_t)lIdxNum;
-		surface.material = GetRemixMaterial(apMaterial);
+		surface.material = hMaterial;
 
 		remixapi_MeshInfo meshInfo = {};
 		meshInfo.sType = REMIXAPI_STRUCT_TYPE_MESH_INFO;
@@ -341,8 +413,29 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
+	// Billboards that fake lighting effects which path tracing produces for real
+	// (Remix's volumetric lighting makes actual light shafts). Matched against
+	// the material name. They stay in the OpenGL renderer (classic mode).
+	static const char *gvSkippedBillboardMaterials[] = { "lightray" };
+
+	static bool IsSkippedBillboard(iRenderable *apObject)
+	{
+		if(apObject->GetRenderType() != eRenderableType_Billboard) return false;
+		cMaterial *pMaterial = apObject->GetMaterial();
+		if(pMaterial==NULL) return false;
+
+		const tString &sName = pMaterial->GetName();
+		for(size_t i=0; i<sizeof(gvSkippedBillboardMaterials)/sizeof(gvSkippedBillboardMaterials[0]); ++i)
+			if(sName.find(gvSkippedBillboardMaterials[i]) != tString::npos) return true;
+		return false;
+	}
+
+	//-----------------------------------------------------------------------
+
 	static void DrawRenderable(iRenderable *apObject, cFrustum *apFrustum)
 	{
+		if(IsSkippedBillboard(apObject)) return;
+
 		iVertexBuffer *pVtxBuffer = apObject->GetVertexBuffer();
 		if(pVtxBuffer==NULL) return;
 
@@ -419,6 +512,17 @@ namespace hpl {
 		if(lFrame == glLastFrame) return;
 		glLastFrame = lFrame;
 
+		// F9 toggles classic / RTX (only while the game window has focus)
+		bool bToggleKeyDown = GetForegroundWindow() == ghGameWindow && (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+		if(bToggleKeyDown && gbToggleKeyWasDown==false)
+		{
+			gbRtxActive = !gbRtxActive;
+			Log("Remix: switched to %s mode\n", gbRtxActive ? "RTX" : "classic");
+		}
+		gbToggleKeyWasDown = bToggleKeyDown;
+
+		if(gbRtxActive==false) return;	// classic: OpenGL presents, Remix stays idle
+
 		cRenderList *pRenderList = apRenderer->GetCurrentRenderList();
 		if(pRenderList==NULL) return;
 
@@ -461,9 +565,32 @@ namespace hpl {
 		for(int i=0; i<pRenderList->GetLightNum(); ++i)
 			DrawLight(pRenderList->GetLight(i));
 
+		// Cache totals, logged about every 5 seconds when the stale counts change
+		if(lFrame % 300 == 0 && (glStaleMeshHits != glLoggedStaleMeshHits || glStaleMaterialHits != glLoggedStaleMaterialHits))
+		{
+			Log("Remix: frame %d: %d meshes / %d materials cached, stale entries rebuilt so far: %d mesh, %d material\n",
+				lFrame, (int)gmapMeshes.size(), (int)gmapMaterials.size(), glStaleMeshHits, glStaleMaterialHits);
+			glLoggedStaleMeshHits = glStaleMeshHits;
+			glLoggedStaleMaterialHits = glStaleMaterialHits;
+		}
+
 		remixapi_PresentInfo presentInfo = {};
 		presentInfo.sType = REMIXAPI_STRUCT_TYPE_PRESENT_INFO;
 		gRemix.Present(&presentInfo);
+	}
+
+	//-----------------------------------------------------------------------
+
+	void cRemixSpike::OnWorldDestroyed()
+	{
+		if(gbRunning) ClearCaches();
+	}
+
+	//-----------------------------------------------------------------------
+
+	bool cRemixSpike::IsRtxActive()
+	{
+		return gbRunning && gbRtxActive;
 	}
 
 	//-----------------------------------------------------------------------

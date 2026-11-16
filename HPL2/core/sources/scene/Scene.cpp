@@ -343,6 +343,9 @@ namespace hpl {
 
 	void cScene::DestroyWorld(cWorld* apWorld)
 	{
+#ifdef HPL_REMIX
+		cRemixSpike::OnWorldDestroyed();
+#endif
 		STLFindAndDelete(mlstWorlds,apWorld);
 	}
 
