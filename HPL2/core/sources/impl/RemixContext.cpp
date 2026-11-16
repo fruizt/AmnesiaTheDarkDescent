@@ -48,6 +48,12 @@ namespace hpl {
 		mpCopyDoneQuery = NULL;
 		mlGlMemory = 0;
 		mlGlTexture = 0;
+
+		mhGameWindow = NULL;
+		mpGameWindowProc = NULL;
+		mpHiddenWindowProc = NULL;
+		mbMenuOpen = false;
+		mbMenuToggleRequested = false;
 	}
 
 	//-----------------------------------------------------------------------
@@ -82,9 +88,29 @@ namespace hpl {
 
 		// Start with Remix's UI closed (no first-use guide)
 		mApi.SetConfigVariable("rtx.showUI", "0");
+		HookGameWindow();
 
 		mbReady = true;
 		return true;
+	}
+
+	//-----------------------------------------------------------------------
+
+	bool cRemixContext::TakeMenuToggleRequest()
+	{
+		bool bRequested = mbMenuToggleRequested;
+		mbMenuToggleRequested = false;
+		return bRequested;
+	}
+
+	//-----------------------------------------------------------------------
+
+	void cRemixContext::SetMenuOpen(bool abX)
+	{
+		if(mbMenuOpen == abX) return;
+		mbMenuOpen = abX;
+		mApi.SetConfigVariable("rtx.showUI", abX ? "2" : "0");	// 2 = advanced menu
+		Log("Remix: developer menu %s\n", abX ? "opened" : "closed");
 	}
 
 	//-----------------------------------------------------------------------
@@ -102,6 +128,13 @@ namespace hpl {
 	{
 		// The simple, conservative sync for now: the CPU waits until the copy is done
 		mApi.dxvk_CopyRenderingOutput(mpSharedSurface, REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR);
+
+		// The developer menu, drawn over the frame in the same texture (needs
+		// rtx.gui.enableExternalPresenter, see remix/rtx.conf). This is also where
+		// Remix's menu runs its frame and reads the input forwarded to it.
+		if(mbMenuOpen)
+			mApi.dxvk_CopyRenderingOutput(mpSharedSurface, REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI);
+
 		if(mpCopyDoneQuery)
 		{
 			mpCopyDoneQuery->Issue(D3DISSUE_END);
@@ -163,6 +196,95 @@ namespace hpl {
 	//////////////////////////////////////////////////////////////////////////
 	// PRIVATE METHODS
 	//////////////////////////////////////////////////////////////////////////
+
+	//-----------------------------------------------------------------------
+
+	// The context whose menu the game window's messages go to (there's one)
+	static cRemixContext *gpMenuContext = NULL;
+
+	static BOOL CALLBACK FindGameWindowProc(HWND ahWnd, LPARAM alParam)
+	{
+		wchar_t sClass[32] = {};
+		GetClassNameW(ahWnd, sClass, 32);
+		if(wcscmp(sClass, L"SDL_app") != 0) return TRUE;
+		*reinterpret_cast<HWND*>(alParam) = ahWnd;
+		return FALSE;
+	}
+
+	static bool IsMenuInputMessage(UINT alMsg)
+	{
+		return	(alMsg >= WM_MOUSEFIRST && alMsg <= WM_MOUSELAST) ||	// moves, buttons, wheels
+				(alMsg >= WM_KEYFIRST && alMsg <= WM_KEYLAST) ||		// keys, system keys, text
+				alMsg == WM_INPUT;										// raw input (SDL's mouse look)
+	}
+
+	//-----------------------------------------------------------------------
+
+	// Subclass the game window (the engine's SDL window, on this thread), as
+	// Remix does with the windows it presents to
+	void cRemixContext::HookGameWindow()
+	{
+		EnumThreadWindows(GetCurrentThreadId(), FindGameWindowProc, reinterpret_cast<LPARAM>(&mhGameWindow));
+		if(mhGameWindow==NULL)
+		{
+			Warning("Remix: game window not found, the developer menu (Alt+X) won't get input\n");
+			return;
+		}
+		gpMenuContext = this;
+		mpGameWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(mhGameWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(GameWindowProc)));
+
+		// In front of Remix's hook on the hidden window
+		mpHiddenWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(mhHiddenWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(HiddenWindowProc)));
+	}
+
+	//-----------------------------------------------------------------------
+
+	LRESULT CALLBACK cRemixContext::HiddenWindowProc(HWND ahWnd, UINT alMsg, WPARAM alWParam, LPARAM alLParam)
+	{
+		// The menu asks Windows to report when the mouse leaves the hidden
+		// window, and the mouse is never over it: Windows answers at once, and
+		// the menu forgets the mouse position (no cursor, no clicks)
+		if(alMsg == WM_MOUSELEAVE || alMsg == WM_NCMOUSELEAVE) return 0;
+
+		return CallWindowProcW(gpMenuContext->mpHiddenWindowProc, ahWnd, alMsg, alWParam, alLParam);
+	}
+
+	//-----------------------------------------------------------------------
+
+	LRESULT CALLBACK cRemixContext::GameWindowProc(HWND ahWnd, UINT alMsg, WPARAM alWParam, LPARAM alLParam)
+	{
+		cRemixContext *pContext = gpMenuContext;
+
+		// Alt+X (a system key, since Alt is held): ask to toggle the menu. Not
+		// passed on, so neither the game nor Remix's own hotkey sees it.
+		if(alMsg == WM_SYSKEYDOWN && alWParam == 'X')
+		{
+			if((alLParam & (1 << 30)) == 0) pContext->mbMenuToggleRequested = true;	// not a key repeat
+			return 0;
+		}
+
+		if(pContext->mbMenuOpen && IsMenuInputMessage(alMsg))
+		{
+			// To the menu (through Remix's hook on its window; same client size,
+			// so mouse coordinates match). Raw input is the game's mouse look.
+			if(alMsg != WM_INPUT) SendMessageW(pContext->mhHiddenWindow, alMsg, alWParam, alLParam);
+
+			// On a click the menu captures the mouse to the hidden window, which
+			// sits elsewhere on screen: drags would get its coordinates. Keep the
+			// capture on the game window, whose messages come here.
+			bool bButtonDown =	alMsg == WM_LBUTTONDOWN || alMsg == WM_RBUTTONDOWN || alMsg == WM_MBUTTONDOWN || alMsg == WM_XBUTTONDOWN ||
+								alMsg == WM_LBUTTONDBLCLK || alMsg == WM_RBUTTONDBLCLK || alMsg == WM_MBUTTONDBLCLK || alMsg == WM_XBUTTONDBLCLK;
+			bool bButtonUp = alMsg == WM_LBUTTONUP || alMsg == WM_RBUTTONUP || alMsg == WM_MBUTTONUP || alMsg == WM_XBUTTONUP;
+			if(bButtonDown && GetCapture() == pContext->mhHiddenWindow) SetCapture(ahWnd);
+			if(bButtonUp && GetCapture() == ahWnd && (alWParam & (MK_LBUTTON|MK_RBUTTON|MK_MBUTTON|MK_XBUTTON1|MK_XBUTTON2)) == 0) ReleaseCapture();
+
+			// Key releases still reach the game, so no key stays held there
+			bool bKeyUp = alMsg == WM_KEYUP || alMsg == WM_SYSKEYUP;
+			if(bKeyUp==false) return 0;
+		}
+
+		return CallWindowProcW(pContext->mpGameWindowProc, ahWnd, alMsg, alWParam, alLParam);
+	}
 
 	//-----------------------------------------------------------------------
 

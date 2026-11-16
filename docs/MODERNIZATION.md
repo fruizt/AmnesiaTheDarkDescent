@@ -359,7 +359,19 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
   lights (ambient fill, skipped so far), sky and outdoor light through
   openings, emissive materials, the trail and decals, and per-level fog. Then
   make Remix's Alt+X menu usable, so the look is tuned live instead of by
-  guessing values.
+  guessing values. (Order changed: Alt+X first, since it also speeds up
+  checking the translation.)
+- **Alt+X works (2026-11-16):** in RTX mode it opens Remix's advanced menu over
+  the game. `cRemixContext` subclasses the game window: Alt+X is caught there,
+  and while the menu is open, mouse and keyboard messages go to the hidden
+  window (Remix's input hook) and not to the game; the mouse lock is
+  released. With `rtx.gui.enableExternalPresenter`, `CopyRenderingOutput(GUI)`
+  draws the menu over the frame in the shared texture. The hidden window's
+  `WM_MOUSELEAVE` is dropped (the mouse is never over it, so ImGui forgot the
+  cursor), and click captures stay on the game window. "Save Settings" writes
+  developer options to `remix/rtx.conf` (via `DXVK_RTX_CONFIG_FILE`, so changes
+  show in git; it rewrites the file and drops comments) and user options to
+  `user.conf` in the working directory (the game folder).
 
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world

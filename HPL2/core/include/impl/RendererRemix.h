@@ -22,6 +22,8 @@
 
 #include "graphics/Renderer.h"
 
+struct SDL_Window;	// SDL's, outside our namespace
+
 namespace hpl {
 
 	//---------------------------------------------
@@ -41,7 +43,8 @@ namespace hpl {
 	//
 	// It sits beside the deferred renderer (eRenderer_Main), which the game
 	// relies on. In RTX mode cScene uses this one for the first world viewport
-	// of each frame. F9 toggles the mode.
+	// of each frame. F9 toggles the mode. In RTX mode, Alt+X opens Remix's
+	// developer menu (the game doesn't get input while it's open).
 	//
 	// Only active when the environment variable HPL_REMIX=1 is set.
 	// Options (environment variables):
@@ -99,6 +102,10 @@ namespace hpl {
 		float mfRadius;
 		bool mbDiag;
 		double mfLastDiagLog;
+
+		// The game's mouse lock, released while Remix's menu is open
+		bool mbMenuRestoreRelativeMouse;
+		SDL_Window *mpMenuRestoreGrabbedWindow;
 
 		// Timings, averaged over 5 seconds
 		double mvTimingSum[6];

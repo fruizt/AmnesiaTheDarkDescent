@@ -62,7 +62,21 @@ namespace hpl {
 		// Draws the shared texture over the whole current OpenGL frame buffer
 		void DrawFrame();
 
+		////////////////////////////////
+		// Remix's developer menu. It reads input from window messages through
+		// Remix's hook on the hidden window, which never gets any, so the game
+		// window's messages are forwarded there while the menu is open (and kept
+		// from the game). The menu is drawn into Remix's frame.
+
+		// True once after Alt+X was pressed in the game window
+		bool TakeMenuToggleRequest();
+		void SetMenuOpen(bool abX);
+		bool IsMenuOpen(){ return mbMenuOpen; }
+
 	private:
+		static LRESULT CALLBACK GameWindowProc(HWND ahWnd, UINT alMsg, WPARAM alWParam, LPARAM alLParam);
+		static LRESULT CALLBACK HiddenWindowProc(HWND ahWnd, UINT alMsg, WPARAM alWParam, LPARAM alLParam);
+		void HookGameWindow();
 		bool CreateDevice(int alWidth, int alHeight);
 		HANDLE CreateSharedTexture(int alWidth, int alHeight);
 		bool ImportIntoOpenGL(HANDLE ahShared, int alWidth, int alHeight);
@@ -79,6 +93,12 @@ namespace hpl {
 		IDirect3DQuery9 *mpCopyDoneQuery;
 		unsigned int mlGlMemory;	// OpenGL memory object and texture of the shared texture
 		unsigned int mlGlTexture;
+
+		HWND mhGameWindow;
+		WNDPROC mpGameWindowProc;	// the game window's own procedure (SDL's)
+		WNDPROC mpHiddenWindowProc;	// Remix's hook on the hidden window
+		bool mbMenuOpen;
+		bool mbMenuToggleRequested;
 	};
 
 	//-----------------------------------------

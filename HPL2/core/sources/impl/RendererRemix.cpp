@@ -37,6 +37,8 @@
 #include "scene/RenderableContainer.h"
 #include "system/LowLevelSystem.h"
 
+#include "SDL2/SDL.h"
+
 #include <cstdlib>
 
 namespace hpl {
@@ -130,6 +132,8 @@ namespace hpl {
 		mfRadius = 50.0f;
 		mbDiag = false;
 		mfLastDiagLog = -1;
+		mbMenuRestoreRelativeMouse = false;
+		mpMenuRestoreGrabbedWindow = NULL;
 
 		for(int i=0; i<eRemixStep_LastEnum; ++i) mvTimingSum[i] = 0;
 		mfTimingMaxFrame = 0;
@@ -234,6 +238,33 @@ namespace hpl {
 			mfLastFrameStart = -1;
 		}
 		mbToggleKeyWasDown = bKeyDown;
+
+		////////////////////////////////
+		// Remix's developer menu (Alt+X), only in RTX mode: it's drawn into
+		// Remix's frame
+		bool bWantMenu = mpContext->IsMenuOpen();
+		if(mpContext->TakeMenuToggleRequest()) bWantMenu = !bWantMenu;
+		if(mbRtxActive==false) bWantMenu = false;
+		if(bWantMenu != mpContext->IsMenuOpen())
+		{
+			mpContext->SetMenuOpen(bWantMenu);
+
+			// The game locks the mouse for looking around; the menu needs a free
+			// cursor (Remix draws its own). Restore the game's state on closing.
+			if(bWantMenu)
+			{
+				mbMenuRestoreRelativeMouse = SDL_GetRelativeMouseMode() == SDL_TRUE;
+				mpMenuRestoreGrabbedWindow = SDL_GetGrabbedWindow();
+				SDL_SetRelativeMouseMode(SDL_FALSE);
+				if(mpMenuRestoreGrabbedWindow) SDL_SetWindowGrab(mpMenuRestoreGrabbedWindow, SDL_FALSE);
+			}
+			else
+			{
+				if(mpMenuRestoreGrabbedWindow) SDL_SetWindowGrab(mpMenuRestoreGrabbedWindow, SDL_TRUE);
+				SDL_SetRelativeMouseMode(mbMenuRestoreRelativeMouse ? SDL_TRUE : SDL_FALSE);
+				mpMenuRestoreGrabbedWindow = NULL;
+			}
+		}
 	}
 
 	//-----------------------------------------------------------------------
