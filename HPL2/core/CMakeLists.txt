@@ -232,7 +232,7 @@ ELSEIF(WIN32)
         # RTX mode through RTX Remix (docs/decisions/0002); active at runtime with HPL_REMIX=1
         OPTION(HPL_REMIX "Build RTX mode through RTX Remix (64-bit Windows)" ON)
         IF(HPL_REMIX)
-            LIST(APPEND impl_sources sources/impl/RemixContext.cpp sources/impl/RemixScene.cpp sources/impl/RendererRemix.cpp)
+            LIST(APPEND impl_sources sources/impl/RemixContext.cpp sources/impl/RemixScene.cpp sources/impl/RemixTextureCache.cpp sources/impl/RendererRemix.cpp)
         ENDIF()
     ENDIF()
 ENDIF()

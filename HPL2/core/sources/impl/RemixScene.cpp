@@ -241,14 +241,16 @@ namespace hpl {
 			InvalidateMaterial(apMaterial);	// then rebuild below
 		}
 
-		// Amnesia's texture files, passed by path
+		// Amnesia's texture files, passed by path (converted to .dds first when
+		// Remix can't load the format)
 		tWString sAlbedo, sNormal, sEmissive;
 		iTexture *pTexture = apMaterial->GetTexture(eMaterialTexture_Diffuse);
-		if(pTexture) sAlbedo = pTexture->GetFullPath();
+		tWString sAlbedoSource = pTexture ? pTexture->GetFullPath() : tWString();
+		sAlbedo = mTextureCache.GetPath(pTexture);
 		pTexture = apMaterial->GetTexture(eMaterialTexture_NMap);
-		if(pTexture && mbNormalMaps) sNormal = pTexture->GetFullPath();
+		if(mbNormalMaps) sNormal = mTextureCache.GetPath(pTexture);
 		pTexture = apMaterial->GetTexture(eMaterialTexture_Illumination);
-		if(pTexture) sEmissive = pTexture->GetFullPath();
+		sEmissive = mTextureCache.GetPath(pTexture);
 
 		// Defaults from the Remix C++ wrapper (remix.h), opaque, no alpha test
 		remixapi_MaterialInfoOpaqueEXT opaqueInfo = {};
@@ -322,7 +324,7 @@ namespace hpl {
 			Warning("Remix: CreateMaterial failed for '%s' (error %d)\n", apMaterial->GetName().c_str(), lResult);
 
 		m_mapMaterials[apMaterial] = hMaterial;
-		m_mapMaterialAlbedo[apMaterial] = sAlbedo;
+		m_mapMaterialAlbedo[apMaterial] = sAlbedoSource;
 		return hMaterial;
 	}
 

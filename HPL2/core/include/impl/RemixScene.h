@@ -21,6 +21,7 @@
 #define HPL_REMIX_SCENE_H
 
 #include "impl/RemixContext.h"	// remix_c.h (with windows.h)
+#include "impl/RemixTextureCache.h"
 
 #include "system/SystemTypes.h"
 
@@ -83,6 +84,7 @@ namespace hpl {
 		bool mbFlipV;
 		bool mbNormalMaps;
 
+		cRemixTextureCache mTextureCache;
 		std::map<cMaterial*, remixapi_MaterialHandle> m_mapMaterials;
 		std::map<tMeshKey, remixapi_MeshHandle> m_mapMeshes;
 
