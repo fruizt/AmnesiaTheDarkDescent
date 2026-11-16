@@ -24,6 +24,7 @@
 #include "impl/RemixTextureCache.h"
 
 #include "system/SystemTypes.h"
+#include "math/MathTypes.h"
 
 #include <map>
 #include <utility>
@@ -47,8 +48,10 @@ namespace hpl {
 	class cRemixScene
 	{
 	public:
-		// Tuning: light color to Remix radiance, flipping texture V, normal maps
-		cRemixScene(remixapi_Interface *apApi, float afLightScale, bool abFlipV, bool abNormalMaps);
+		// Tuning: light brightness (1 = matches classic mode at half a light's
+		// radius), emitter radius of hand-held lights, flipping texture V,
+		// normal maps
+		cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps);
 
 		void SetCamera(cFrustum *apFrustum);
 		// Destroys the previous frame's lights and dynamic meshes; call first
@@ -77,10 +80,12 @@ namespace hpl {
 		remixapi_MeshHandle GetMesh(iVertexBuffer *apVtxBuffer, cMaterial *apMaterial);
 		remixapi_MeshHandle CreateMesh(iVertexBuffer *apVtxBuffer, remixapi_MaterialHandle ahMaterial, uint64_t alHash);
 		void InvalidateMaterial(cMaterial *apMaterial);
-		bool IsSkippedBillboard(iRenderable *apObject);
+		bool IsSkippedEffect(iRenderable *apObject);
 
 		remixapi_Interface *mpApi;
 		float mfLightScale;
+		float mfHeldLightRadius;
+		cVector3f mvCameraPos;
 		bool mbFlipV;
 		bool mbNormalMaps;
 

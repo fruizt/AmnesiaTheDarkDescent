@@ -173,15 +173,16 @@ namespace hpl {
 		if(mpScene==NULL)
 		{
 			mfRadius = EnvFloat("HPL_REMIX_RADIUS", 50.0f);
-			float fLightScale = EnvFloat("HPL_REMIX_LIGHT_SCALE", 100.0f);
+			float fLightScale = EnvFloat("HPL_REMIX_LIGHT_SCALE", 1.0f);
+			float fHeldLightRadius = EnvFloat("HPL_REMIX_HELD_LIGHT_RADIUS", 0.5f);
 			bool bFlipV = EnvFlag("HPL_REMIX_FLIP_V");
 			bool bNormalMaps = EnvFlag("HPL_REMIX_NORMAL_MAPS");
-			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, bFlipV, bNormalMaps));
+			mpScene = hplNew(cRemixScene, (mpContext->GetApi(), fLightScale, fHeldLightRadius, bFlipV, bNormalMaps));
 			mbRtxActive = EnvFlag("HPL_REMIX_START_RTX");
 			mbDiag = EnvFlag("HPL_REMIX_DIAG");
 
-			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.1f, flip V %d, normal maps %d)\n",
-				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, bFlipV, bNormalMaps);
+			Log("Remix: renderer ready at %dx%d, %s mode, F9 toggles (radius %.1f m, light scale %.2f, held light radius %.2f m, flip V %d, normal maps %d)\n",
+				vSize.x, vSize.y, mbRtxActive ? "RTX" : "classic", mfRadius, fLightScale, fHeldLightRadius, bFlipV, bNormalMaps);
 		}
 
 		////////////////////////////////////

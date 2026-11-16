@@ -52,10 +52,17 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	// Billboards that fake lighting effects which path tracing produces for real
-	// (Remix's volumetric lighting makes actual light shafts). Matched against
-	// the material name. They stay in the OpenGL renderer (classic mode).
-	static const char *gvSkippedBillboardMaterials[] = { "lightray" };
+	// Effects that fake what path tracing does for real, left out of RTX mode
+	// (they stay in classic mode). Matched against the material name.
+	// - Light-ray billboards: Remix's volumetric lighting makes real light shafts.
+	// - Area fog particles: large flat cards with a cloud texture, which classic
+	//   mode fades where they meet geometry; path traced they show as lit,
+	//   textured sheets. Remix's volumetric fog is to replace them.
+	struct tSkippedEffect { eRenderableType mType; const char *msMaterialPart; };
+	static const tSkippedEffect gvSkippedEffects[] = {
+		{ eRenderableType_Billboard, "lightray" },
+		{ eRenderableType_ParticleEmitter, "area_fog" },
+	};
 
 	//-----------------------------------------------------------------------
 
@@ -65,10 +72,12 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	cRemixScene::cRemixScene(remixapi_Interface *apApi, float afLightScale, bool abFlipV, bool abNormalMaps)
+	cRemixScene::cRemixScene(remixapi_Interface *apApi, float afLightScale, float afHeldLightRadius, bool abFlipV, bool abNormalMaps)
 	{
 		mpApi = apApi;
 		mfLightScale = afLightScale;
+		mfHeldLightRadius = afHeldLightRadius;
+		mvCameraPos = cVector3f(0);
 		mbFlipV = abFlipV;
 		mbNormalMaps = abNormalMaps;
 		mlStaleMeshHits = 0;
@@ -88,6 +97,7 @@ namespace hpl {
 		// The camera's world-space basis, from the view matrix (as cCamera does)
 		const cMatrixf &mtxView = apFrustum->GetViewMatrix();
 		cVector3f vPos = apFrustum->GetOrigin();
+		mvCameraPos = vPos;
 		cVector3f vForward = mtxView.GetForward() * -1.0f;
 		cVector3f vUp = mtxView.GetUp();
 		cVector3f vRight = mtxView.GetRight();
@@ -114,7 +124,7 @@ namespace hpl {
 
 	void cRemixScene::DrawObject(iRenderable *apObject, cFrustum *apFrustum)
 	{
-		if(IsSkippedBillboard(apObject)) return;
+		if(IsSkippedEffect(apObject)) return;
 
 		iVertexBuffer *pVtxBuffer = apObject->GetVertexBuffer();
 		if(pVtxBuffer==NULL) return;
@@ -165,11 +175,39 @@ namespace hpl {
 
 		const cColor &color = apLight->GetDiffuseColor();
 		cVector3f vPos = apLight->GetWorldPosition();
+		float fRange = apLight->GetRadius();
+		if(fRange <= 0) return;	// lights nothing in classic mode either
+
+		////////////////////////////////
+		// Brightness. Classic mode lights a surface at distance d with
+		// color * (1 - d^2/R^2) (deferred_light_frag.glsl with the default linear
+		// falloff map), never more than its color. Remix is physical: E = I/d^2.
+		// Match the two at half the radius, where classic gives 0.75 * color:
+		// I = 0.75 * color * (R/2)^2. So a light's power grows with its radius,
+		// as the area it lights in classic mode does.
+		float fIntensity = mfLightScale * 0.1875f * fRange * fRange;
+
+		// Emitter size: a few centimeters, more for big lights (softer shadows)
+		float fEmitterRadius = cMath::Clamp(fRange * 0.015f, 0.03f, 0.15f);
+
+		// Lights held by the player (the lantern, within 1 m of the camera).
+		// Matched at half the radius, the lantern (R = 10 m) blinded the hand
+		// holding it: a point light that reaches that far is a sun up close.
+		// Match them at 1 m instead (classic: color * (1 - 1/R^2)), and give them
+		// a large emitter, since a sphere light is never brighter than its surface.
+		if(cMath::Vector3DistSqr(vPos, mvCameraPos) < 1.0f)
+		{
+			fIntensity = mfLightScale * cMath::Max(1.0f - 1.0f / (fRange * fRange), 0.0f);
+			fEmitterRadius = mfHeldLightRadius;
+		}
+
+		// Remix takes radiance: intensity per projected area of the sphere
+		float fRadiance = fIntensity / (kPif * fEmitterRadius * fEmitterRadius);
 
 		remixapi_LightInfoSphereEXT sphereInfo = {};
 		sphereInfo.sType = REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT;
 		sphereInfo.position = { vPos.x, vPos.y, vPos.z };
-		sphereInfo.radius = 0.05f;
+		sphereInfo.radius = fEmitterRadius;
 		sphereInfo.volumetricRadianceScale = 1.0f;
 
 		if(lightType == eLightType_Spot)
@@ -190,7 +228,7 @@ namespace hpl {
 		lightInfo.sType = REMIXAPI_STRUCT_TYPE_LIGHT_INFO;
 		lightInfo.pNext = &sphereInfo;
 		lightInfo.hash = (uint64_t)(uintptr_t)apLight;
-		lightInfo.radiance = { color.r * mfLightScale, color.g * mfLightScale, color.b * mfLightScale };
+		lightInfo.radiance = { color.r * fRadiance, color.g * fRadiance, color.b * fRadiance };
 
 		remixapi_LightHandle hLight = NULL;
 		if(mpApi->CreateLight(&lightInfo, &hLight) == REMIXAPI_ERROR_CODE_SUCCESS)
@@ -461,15 +499,17 @@ namespace hpl {
 
 	//-----------------------------------------------------------------------
 
-	bool cRemixScene::IsSkippedBillboard(iRenderable *apObject)
+	bool cRemixScene::IsSkippedEffect(iRenderable *apObject)
 	{
-		if(apObject->GetRenderType() != eRenderableType_Billboard) return false;
 		cMaterial *pMaterial = apObject->GetMaterial();
 		if(pMaterial==NULL) return false;
 
 		const tString &sName = pMaterial->GetName();
-		for(size_t i=0; i<sizeof(gvSkippedBillboardMaterials)/sizeof(gvSkippedBillboardMaterials[0]); ++i)
-			if(sName.find(gvSkippedBillboardMaterials[i]) != tString::npos) return true;
+		for(size_t i=0; i<sizeof(gvSkippedEffects)/sizeof(gvSkippedEffects[0]); ++i)
+		{
+			if(	apObject->GetRenderType() == gvSkippedEffects[i].mType &&
+				sName.find(gvSkippedEffects[i].msMaterialPart) != tString::npos) return true;
+		}
 		return false;
 	}
 

@@ -346,6 +346,20 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
   on the floor).
 - **Lights are uncalibrated:** inverse-square falloff blows out what's close to
   a light. The hand-held lantern makes the hands glow white.
+- **Light calibration (first pass):** classic mode lights a surface with
+  `color * (1 - d²/R²)` (linear falloff map), never brighter than the color.
+  Remix lights now get `I = 0.1875 * color * R²`, matching classic at half the
+  radius, from a 3–15 cm sphere. Lights within 1 m of the camera (the lantern,
+  R = 10 m) are matched at 1 m instead, with a 0.5 m emitter. Auto exposure is
+  off (`remix/rtx.conf`): it brightened dark rooms like a camera adjusting.
+  Area fog particle cards are left out of RTX mode (they read as textured
+  sheets), and a first volumetric air setting is in `rtx.conf`.
+- **Next, grounded order (2026-11-16):** first finish translating Amnesia's
+  lighting into Remix, checked against the data. The missing pieces are box
+  lights (ambient fill, skipped so far), sky and outdoor light through
+  openings, emissive materials, the trail and decals, and per-level fog. Then
+  make Remix's Alt+X menu usable, so the look is tuned live instead of by
+  guessing values.
 
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world
