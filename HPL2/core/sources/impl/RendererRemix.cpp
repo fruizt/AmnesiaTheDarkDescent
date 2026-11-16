@@ -34,6 +34,7 @@
 #include "math/Frustum.h"
 #include "math/Math.h"
 #include "scene/World.h"
+#include "scene/Light.h"
 #include "scene/RenderableContainer.h"
 #include "system/LowLevelSystem.h"
 
@@ -182,7 +183,7 @@ namespace hpl {
 		{
 			mfRadius = EnvFloat("HPL_REMIX_RADIUS", 50.0f);
 			float fLightScale = EnvFloat("HPL_REMIX_LIGHT_SCALE", 1.0f);
-			float fHeldLightRadius = EnvFloat("HPL_REMIX_HELD_LIGHT_RADIUS", 0.5f);
+			float fHeldLightRadius = EnvFloat("HPL_REMIX_HELD_LIGHT_RADIUS", 0.05f);
 			bool bFlipV = EnvFlag("HPL_REMIX_FLIP_V");
 			const char *sNormalMaps = getenv("HPL_REMIX_NORMAL_MAPS");
 			bool bNormalMaps = sNormalMaps==NULL || sNormalMaps[0] != '0';	// on unless "0"
@@ -473,6 +474,20 @@ namespace hpl {
 			}
 		}
 		Log("  (%d objects)\n", lCount);
+
+		// Lights near the camera (the lantern), in the same view space
+		for(int i=0; i<mpCurrentRenderList->GetLightNum(); ++i)
+		{
+			iLight *pLight = mpCurrentRenderList->GetLight(i);
+			cVector3f vLightPos = pLight->GetWorldPosition();
+			if(cMath::Vector3DistSqr(vLightPos, vCamPos) > 1.5f*1.5f) continue;
+
+			cVector3f vView = cMath::MatrixMul(mtxView, vLightPos);
+			const cColor &color = pLight->GetDiffuseColor();
+			Log("  light '%s' type %d, view position (%.2f %.2f %.2f), radius %.1f, color (%.2f %.2f %.2f)\n",
+				pLight->GetName().c_str(), (int)pLight->GetLightType(), vView.x, vView.y, vView.z,
+				pLight->GetRadius(), color.r, color.g, color.b);
+		}
 	}
 
 	//-----------------------------------------------------------------------

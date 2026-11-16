@@ -110,6 +110,7 @@ namespace hpl {
 		remixapi_Interface *mpApi;
 		float mfLightScale;
 		float mfHeldLightRadius;
+		std::vector<cVector3f> mvGlowCentersNearCamera;	// this frame's glow-mapped objects the player holds
 		cVector3f mvCameraPos;
 		bool mbFlipV;
 		bool mbNormalMaps;

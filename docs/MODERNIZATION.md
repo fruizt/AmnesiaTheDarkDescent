@@ -383,6 +383,20 @@ steady 60 FPS, the cap of the 60 Hz game logic (`LimitFPS="true"`):
   meshes and lights hash level + name. With `HPL_REMIX_DIAG=1` every hash is
   logged once. Two runs each of the menu (49 hashes) and Rainy Hall (519:
   308 meshes, 138 materials, 40 lights, 33 dynamic) gave identical hashes.
+- **Amnesia's own maps (0003 step 2):** Remix decodes normal maps as unsigned
+  octahedral, so Amnesia's RGB normal maps are converted (98 in Rainy Hall), and
+  specular maps become roughness (R intensity, G Blinn-Phong power). Materials
+  without a specular map are fully rough. Surfaces gained relief, but the
+  lantern turned out to dominate how scenes look.
+- **The lantern (0003 step 4):** measured with `HPL_REMIX_DIAG`, its 10 m light
+  sits 10–20 cm *behind* the lantern, inside the forearm (it's placed relative
+  to the hands' origin; classic mode can't show the difference). Held lights,
+  those of the `PlayerHands_` entity, now move to the center of the held
+  glow-mapped object (the lantern), and the lantern's 0.3 m "hand glow" light
+  is left out. It lights the room at full classic-matched strength. Up close it
+  looks like the sun: brightness and reach are linked for a physical light,
+  so the balance is an art decision. Drifting patchy fog was removed from
+  `rtx.conf` (it showed as dark smoke in lantern light).
 
 The real build, replacing the spike step by step. **OpenGL always owns the game
 window.** Remix renders off-screen, OpenGL shows Remix's image where the 3D world

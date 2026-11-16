@@ -32,6 +32,8 @@
 #include "system/LowLevelSystem.h"
 #include "system/String.h"
 
+#include <cstring>
+
 namespace hpl {
 
 	//////////////////////////////////////////////////////////////////////////
@@ -88,6 +90,17 @@ namespace hpl {
 		{ eRenderableType_Billboard, "lightray" },
 		{ eRenderableType_ParticleEmitter, "area_fog" },
 	};
+
+	// What the player holds (the lantern, its lights and glow) is part of one
+	// entity in Amnesia; its lights and objects are named after it
+	// ("PlayerHands_PointLight_1"). Distance to the camera can't tell: level
+	// lights the player walks past are as close.
+	static const char *gsHeldEntityPrefix = "PlayerHands_";
+
+	static bool IsHeld(iEntity3D *apEntity)
+	{
+		return apEntity->GetName().compare(0, strlen(gsHeldEntityPrefix), gsHeldEntityPrefix) == 0;
+	}
 
 	//-----------------------------------------------------------------------
 
@@ -162,6 +175,11 @@ namespace hpl {
 		iVertexBuffer *pVtxBuffer = apObject->GetVertexBuffer();
 		if(pVtxBuffer==NULL) return;
 
+		// Glowing objects near the camera: where held lights really are (DrawLight)
+		cMaterial *pMaterial = apObject->GetMaterial();
+		if(pMaterial && pMaterial->GetTexture(eMaterialTexture_Illumination) && IsHeld(apObject))
+			mvGlowCentersNearCamera.push_back(apObject->GetBoundingVolume()->GetWorldCenter());
+
 		remixapi_MeshHandle hMesh = NULL;
 		if(pVtxBuffer->GetUsageType() == eVertexBufferUsageType_Static)
 		{
@@ -202,6 +220,7 @@ namespace hpl {
 
 		mlWorldHash = HashString(cString::ToLowerCase(asWorldName));
 		m_mapLightNamesThisFrame.clear();
+		mvGlowCentersNearCamera.clear();
 		m_mapObjectNamesThisFrame.clear();
 	}
 
@@ -229,14 +248,35 @@ namespace hpl {
 		// Emitter size: a few centimeters, more for big lights (softer shadows)
 		float fEmitterRadius = cMath::Clamp(fRange * 0.015f, 0.03f, 0.15f);
 
-		// Lights held by the player (the lantern, within 1 m of the camera).
-		// Matched at half the radius, the lantern (R = 10 m) blinded the hand
-		// holding it: a point light that reaches that far is a sun up close.
-		// Match them at 1 m instead (classic: color * (1 - 1/R^2)), and give them
-		// a large emitter, since a sphere light is never brighter than its surface.
-		if(cMath::Vector3DistSqr(vPos, mvCameraPos) < 1.0f)
+		// Lights held by the player (the lantern)
+		bool bHeld = IsHeld(apLight);
+		if(bHeld)
 		{
-			fIntensity = mfLightScale * cMath::Max(1.0f - 1.0f / (fRange * fRange), 0.0f);
+			// The lantern also carries a light reaching only 0.3 m, right at the
+			// hand: a classic-mode trick to give the hand a warm glow. Physically
+			// it's a light a few centimeters from the skin, which blew the hand
+			// out. Held lights that reach less than a meter are left out (0003).
+			if(fRange < 1.0f) return;
+
+			// The lantern's light is placed relative to the hands' origin, 10-20 cm
+			// behind the lantern, inside the forearm (measured with HPL_REMIX_DIAG).
+			// Classic mode can't show the difference; a path tracer lights the hand
+			// from inside. The light comes from the glowing part instead: the
+			// center of the nearest glow-mapped object near the camera (the
+			// lantern's glass and flame).
+			float fBestSqrDist = 0.6f * 0.6f;
+			cVector3f vEnginePos = vPos;
+			for(size_t i=0; i<mvGlowCentersNearCamera.size(); ++i)
+			{
+				float fSqrDist = cMath::Vector3DistSqr(mvGlowCentersNearCamera[i], vEnginePos);
+				if(fSqrDist < fBestSqrDist) { fBestSqrDist = fSqrDist; vPos = mvGlowCentersNearCamera[i]; }
+			}
+			if(mbLogHashes && vPos != vEnginePos)
+			{
+				char sSource[256];
+				sprintf_s(sSource, "%s, moved %.2f m to the glowing object", apLight->GetName().c_str(), sqrtf(fBestSqrDist));
+				LogHashOnce(MixHash(HashString(apLight->GetName()), 0x48454c44ull), "held light", sSource);
+			}
 			fEmitterRadius = mfHeldLightRadius;
 		}
 
