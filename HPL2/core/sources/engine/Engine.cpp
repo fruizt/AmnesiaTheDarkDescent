@@ -51,10 +51,6 @@
 
 #include "impl/SDLEngineSetup.h"
 
-#ifdef HPL_REMIX
-#include "impl/RemixSpike.h"
-#endif
-
 namespace hpl {
 
 	//////////////////////////////////////////////////////////////////////////
@@ -513,10 +509,6 @@ namespace hpl {
 				STOP_TIMING(WaitAndFinishRendering)
 
 				START_TIMING(SwapBuffers)
-#ifdef HPL_REMIX
-				// In RTX mode Remix presents to the window instead of OpenGL
-				if(cRemixSpike::IsRtxActive()==false)
-#endif
 				mpGraphics->GetLowLevel()->SwapBuffers();
 				STOP_TIMING(SwapBuffers)
 				

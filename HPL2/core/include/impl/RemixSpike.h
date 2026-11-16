@@ -29,11 +29,12 @@ namespace hpl {
 
 	// Phase 1 of the RTX Remix spike (see docs/MODERNIZATION.md).
 	// After the OpenGL renderer draws the world, mirror what it drew (visible
-	// objects, their materials, the lights and the camera) into RTX Remix, which
-	// presents path-traced frames into the game window. F9 toggles between classic
-	// (OpenGL) and RTX (Remix) mode; Alt+X opens Remix's menu in RTX mode. The
-	// game's own menus/HUD (OpenGL) don't show in RTX mode yet. Only active when the
-	// environment variable HPL_REMIX=1 is set and the build has HPL_REMIX (64-bit Windows).
+	// objects, their materials, the lights and the camera) into RTX Remix. Remix
+	// renders off-screen into a texture shared with OpenGL, which draws it in place
+	// of the world, so post effects and the game's menus/HUD still draw on top and
+	// OpenGL stays the only one presenting to the window. F9 toggles between
+	// classic (OpenGL) and RTX (Remix) mode. Only active when the environment
+	// variable HPL_REMIX=1 is set and the build has HPL_REMIX (64-bit Windows).
 	//
 	// Options (environment variables):
 	//   HPL_REMIX_START_RTX    1 = start in RTX mode (default: classic)
@@ -48,10 +49,6 @@ namespace hpl {
 		// Called before the engine destroys a world: everything cached from it
 		// (keyed by engine pointers, which a new world may reuse) becomes invalid
 		static void OnWorldDestroyed();
-
-		// True in RTX mode: Remix presents the frame, so the engine must skip
-		// OpenGL's SwapBuffers (both present to the same window)
-		static bool IsRtxActive();
 	};
 
 	//-----------------------------------------
