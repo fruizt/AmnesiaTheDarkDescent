@@ -85,6 +85,7 @@ namespace hpl {
 		void RenderObjects();
 
 		void AddNodeObjectsInRadius(iRenderableContainerNode *apNode, const cVector3f &avCenter, tRenderableFlag alNeededFlags);
+		void UpdateFog();
 		void RecordTimings(const double *apStepMs);
 		void LogObjectsNearCamera();
 
@@ -102,6 +103,11 @@ namespace hpl {
 		float mfRadius;
 		bool mbDiag;
 		double mfLastDiagLog;
+
+		// The fog values last sent to Remix
+		cWorld *mpFogWorld;
+		float mfFogTransmittance;
+		float mfFogEnd;
 
 		// The game's mouse lock, released while Remix's menu is open
 		bool mbMenuRestoreRelativeMouse;

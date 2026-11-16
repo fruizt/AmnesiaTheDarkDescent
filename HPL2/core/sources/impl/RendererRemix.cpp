@@ -40,6 +40,7 @@
 #include "SDL2/SDL.h"
 
 #include <cstdlib>
+#include <cmath>
 
 namespace hpl {
 
@@ -134,6 +135,9 @@ namespace hpl {
 		mfLastDiagLog = -1;
 		mbMenuRestoreRelativeMouse = false;
 		mpMenuRestoreGrabbedWindow = NULL;
+		mpFogWorld = NULL;
+		mfFogTransmittance = -1;
+		mfFogEnd = -1;
 
 		for(int i=0; i<eRemixStep_LastEnum; ++i) mvTimingSum[i] = 0;
 		mfTimingMaxFrame = 0;
@@ -373,6 +377,8 @@ namespace hpl {
 		vStepMs[eRemixStep_Gather] = mfGatherMs;
 		double fStepStart = NowMs();
 
+		UpdateFog();
+
 		////////////////////////////////
 		// The scene, for this frame
 		mpScene->BeginFrame();	// drops last frame's lights and dynamic meshes
@@ -464,6 +470,48 @@ namespace hpl {
 			}
 		}
 		Log("  (%d objects)\n", lCount);
+	}
+
+	//-----------------------------------------------------------------------
+
+	// The world's fog as Remix's volumetric air. Classic mode blends toward the
+	// fog color by clamp((d - start) / (end - start))^exp * alpha
+	// (deferred_fog_frag.glsl): at the end distance, alpha of the scene is
+	// replaced by the fog color, which Amnesia keeps very dark. Remix's air
+	// attenuates light physically, T(d) = transmittance^(d / measured distance),
+	// so: transmittance 1 - alpha, measured at the fog's end distance. (Remix
+	// air starts at the camera; classic fog's start distance has no
+	// counterpart.) Re-sent only when the values change, since scripts change
+	// fog during play.
+	void cRendererRemix::UpdateFog()
+	{
+		bool bActive = mpCurrentWorld->GetFogActive();
+		float fAlpha = bActive ? cMath::Clamp(mpCurrentWorld->GetFogColor().a, 0.0f, 0.99f) : 0.0f;
+		float fEnd = bActive ? cMath::Max(mpCurrentWorld->GetFogEnd(), 1.0f) : 200.0f;
+		float fTransmittance = bActive ? 1.0f - fAlpha : 0.999f;	// no fog: Remix's default, clear air
+
+		if(mpFogWorld == mpCurrentWorld && fTransmittance == mfFogTransmittance && fEnd == mfFogEnd) return;
+		mpFogWorld = mpCurrentWorld;
+		mfFogTransmittance = fTransmittance;
+		mfFogEnd = fEnd;
+
+		// Remix reads this color as sRGB (gamma encoded) and converts it to linear
+		float fT = fTransmittance;
+		float fSrgb = fT <= 0.0031308f ? fT * 12.92f : 1.055f * powf(fT, 1.0f / 2.4f) - 0.055f;
+
+		char sColor[64], sDistance[32];
+		sprintf_s(sColor, "%.4f, %.4f, %.4f", fSrgb, fSrgb, fSrgb);
+		sprintf_s(sDistance, "%.2f", fEnd);
+		remixapi_Interface *pApi = mpContext->GetApi();
+		pApi->SetConfigVariable("rtx.volumetrics.transmittanceColor", sColor);
+		pApi->SetConfigVariable("rtx.volumetrics.transmittanceMeasurementDistanceMeters", sDistance);
+
+		if(bActive)
+			Log("Remix: fog from the world: %.0f%% of the light left after %.1f m (classic fog: alpha %.2f, start %.1f, end %.1f, falloff exp %.2f%s)\n",
+				fTransmittance * 100.0f, fEnd, fAlpha, mpCurrentWorld->GetFogStart(), mpCurrentWorld->GetFogEnd(), mpCurrentWorld->GetFogFalloffExp(),
+				mpCurrentWorld->GetFogFalloffExp() != 1.0f ? ", exponent not translated" : "");
+		else
+			Log("Remix: the world has no fog, clear air\n");
 	}
 
 	//-----------------------------------------------------------------------
